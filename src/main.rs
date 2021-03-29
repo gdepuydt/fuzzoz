@@ -1,5 +1,8 @@
+#![feature(asm)]
 #![no_std]
 #![no_main]
+
+mod core_requirements;
 
 use core::panic::PanicInfo;
 

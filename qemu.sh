@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+cargo build
 qemu-system-x86_64 \
     -enable-kvm \
     -m 128 \
