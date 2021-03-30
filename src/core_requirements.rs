@@ -1,3 +1,5 @@
+use core::intrinsics::wrapping_sub;
+
 // was temporarily removed
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
@@ -88,6 +90,7 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8, mut n: usize)
 }
 
 // Fill memory with a constant
+#[no_mangle]
 pub unsafe extern fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     asm!("rep stosb",
         inout("rcx") n => _,
@@ -98,5 +101,22 @@ pub unsafe extern fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
 
     s
 }
+
+#[no_mangle]
+pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    let mut ii = 0;
+
+    while ii <  n {
+        let a = s1.offset(ii as isize);
+        let b = s2.offset(ii as isize);
+        if a != b {
+            return (a as i32).wrapping_sub(b as i32);
+        }
+
+        ii = ii.wrapping_add(1);
+    }
+    0
+}
+
 
 
