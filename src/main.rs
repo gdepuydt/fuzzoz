@@ -31,10 +31,12 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
-extern "C" fn efi_main(_image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
-    // First,  register the EFI systen table in a global so we can use it
+extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
+    // First,  register the EFI system table in a global so we can use it
     // in other places such as a `print!` macro
     unsafe { efi::register_system_table(system_table); }
+
+    efi::get_memory_map(image_handle);
 
     panic!("Moose!");
 }

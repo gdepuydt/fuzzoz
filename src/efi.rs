@@ -59,14 +59,14 @@ pub fn output_string(string: &str) {
     }
 }
 
-pub fn get_memory_map() {
+pub fn get_memory_map(image_handle: EfiHandle) {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
         return;
     }
 
-    let mut memory_map = [0u8; 2 * 1024];
+    let mut memory_map = [0u8; 4 * 1024];
 
     let mut free_memory = 0u64;
 
@@ -85,7 +85,7 @@ pub fn get_memory_map() {
             &mut mdesc_version,
         );
 
-        assert!(ret.0 == 0, "{:?}", ret);
+        assert!(ret.0 == 0, "Get memory map failed: {:?}", ret);
 
         for offset in (0..size).step_by(mdesc_size) {
             let entry = core::ptr::read_unaligned(
@@ -97,16 +97,27 @@ pub fn get_memory_map() {
             if typ.avail_post_exit_boot_service() {
                 free_memory += entry.number_of_pages * 4096;
             }
-
+            /*
             print!(
                 "{:016x} {:016x} {:?}\n",
                 entry.physical_start,
                 entry.number_of_pages * 4096,
                 typ
-            );
+            );*/
         }
+
+        // Exit Boot serices
+        let ret = ((*(*system_table).boot_services).exit_boot_services)(
+            image_handle,
+            key
+        );
+
+        assert!(ret.0 == 0, "Failed to exit boot services: {:?}", ret);
+
+        // Kill the EFI system table
+        EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
+
     }
-    print!("Total bytes free: {}\n", free_memory);
 }
 
 #[derive(Clone, Copy, Debug)]
