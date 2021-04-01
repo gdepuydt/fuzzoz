@@ -1,3 +1,4 @@
+#![feature(core_intrinsics)]
 use core::intrinsics::wrapping_sub;
 
 // was temporarily removed

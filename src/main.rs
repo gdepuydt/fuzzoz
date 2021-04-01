@@ -1,4 +1,4 @@
-#![feature(asm, panic_info_message)]
+#![feature(asm, panic_info_message, core_intrinsics)]
 #![no_std]
 #![no_main]
 
@@ -22,6 +22,12 @@ fn panic(info: &PanicInfo) -> ! {
         print!("{}\n", message);
     }
 
+    loop  {
+        unsafe {
+            asm!("hlt")
+        }
+    }
+
 }
 
 #[no_mangle]
@@ -29,6 +35,6 @@ extern fn efi_main(_image_handle: EfiHandle,
     system_table: *mut EfiSystemTable) -> EfiStatus {
         // First,  register the EFI systen table in a global so we can use it
         // in other places such as a `print!` macro
-        unsafe { efi::register_system_table(system_table); }  
+        unsafe { efi::register_system_table(system_table) }  
 
 }
