@@ -1,26 +1,35 @@
-use core::{sync::atomic::{AtomicPtr, Ordering}, usize};
+use core::{
+    sync::atomic::{AtomicPtr, Ordering},
+    usize,
+};
 
-static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = 
-AtomicPtr::new(core::ptr::null_mut());
+static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
 
 pub unsafe fn register_system_table(system_table: *mut EfiSystemTable) -> EfiStatus {
-    EFI_SYSTEM_TABLE.compare_exchange(core::ptr::null_mut(), system_table, Ordering::SeqCst, Ordering::SeqCst);
+    EFI_SYSTEM_TABLE
+        .compare_exchange(
+            core::ptr::null_mut(),
+            system_table,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .unwrap();
     EfiStatus(0)
 }
 
-pub fn output_string (string: &str) {
+pub fn output_string(string: &str) {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
-    if system_table.is_null() { return; }
+    if system_table.is_null() {
+        return;
+    }
 
-    let console_out = unsafe {
-        (*system_table).console_out
-    };
+    let console_out = unsafe { (*system_table).console_out };
 
-    // We are using UCS-2 and not UTF-16, as that's what UEFI uses. 
+    // We are using UCS-2 and not UTF-16, as that's what UEFI uses.
     // Thus, we don't have to worry about 32-bit code points
     let mut tmp = [0u16; 32];
-    let mut in_use =  0;
+    let mut in_use = 0;
 
     for chr in string.encode_utf16() {
         if chr == b'\n' as u16 {
@@ -48,12 +57,14 @@ pub fn output_string (string: &str) {
             ((*(console_out)).output_string)(console_out, tmp.as_ptr());
         }
     }
-} 
+}
 
 pub fn get_memory_map() {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
-    if system_table.is_null() { return; }
+    if system_table.is_null() {
+        return;
+    }
 
     let mut memory_map = [0u8; 2 * 1024];
 
@@ -71,7 +82,7 @@ pub fn get_memory_map() {
             memory_map.as_mut_ptr(),
             &mut key,
             &mut mdesc_size,
-            &mut mdesc_version
+            &mut mdesc_version,
         );
 
         assert!(ret.0 == 0, "{:?}", ret);
@@ -82,17 +93,17 @@ pub fn get_memory_map() {
             );
 
             let typ: EfiMemoryType = entry.typ.into();
-            
+
             if typ.avail_post_exit_boot_service() {
                 free_memory += entry.number_of_pages * 4096;
             }
 
-            print!("{:016x} {:016x} {:?}\n",
+            print!(
+                "{:016x} {:016x} {:?}\n",
                 entry.physical_start,
                 entry.number_of_pages * 4096,
                 typ
-              );
-
+            );
         }
     }
     print!("Total bytes free: {}\n", free_memory);
@@ -135,36 +146,32 @@ enum EfiMemoryType {
 
 impl EfiMemoryType {
     fn avail_post_exit_boot_service(&self) -> bool {
-        match self {
-            EfiMemoryType::BootServiceCode    |
-            EfiMemoryType::BootServiceData    |
-            EfiMemoryType::ConventionalMemory |
-            EfiMemoryType::PersistentMemory => true,
-            _ => false
-
-        }
-    }   
+        matches!(self, EfiMemoryType::BootServiceCode
+            | EfiMemoryType::BootServiceData
+            | EfiMemoryType::ConventionalMemory
+            | EfiMemoryType::PersistentMemory)
+    }
 }
 
 impl From<u32> for EfiMemoryType {
-    fn from(val: u32) -> Self { 
+    fn from(val: u32) -> Self {
         match val {
-            0  => EfiMemoryType::ReservedMemoryType,
-            1  => EfiMemoryType::LoaderCode,
-            2  => EfiMemoryType::LoaderData,
-            3  => EfiMemoryType::BootServiceCode,
-            4  => EfiMemoryType::BootServiceData,
-            5  => EfiMemoryType::RuntimeServiceCode,
-            6  => EfiMemoryType::RuntimeServiceData,
-            7  => EfiMemoryType::ConventionalMemory,
-            8  => EfiMemoryType::UnusableMemory,
-            9  => EfiMemoryType::ACPIReclaimMemory,
+            0 => EfiMemoryType::ReservedMemoryType,
+            1 => EfiMemoryType::LoaderCode,
+            2 => EfiMemoryType::LoaderData,
+            3 => EfiMemoryType::BootServiceCode,
+            4 => EfiMemoryType::BootServiceData,
+            5 => EfiMemoryType::RuntimeServiceCode,
+            6 => EfiMemoryType::RuntimeServiceData,
+            7 => EfiMemoryType::ConventionalMemory,
+            8 => EfiMemoryType::UnusableMemory,
+            9 => EfiMemoryType::ACPIReclaimMemory,
             10 => EfiMemoryType::ACPIMemoryNVS,
             11 => EfiMemoryType::MemoryMappedIO,
             12 => EfiMemoryType::MemoryMappedIOPortSpace,
             13 => EfiMemoryType::PalCode,
             14 => EfiMemoryType::PersistentMemory,
-            _  => EfiMemoryType::Invalid,
+            _ => EfiMemoryType::Invalid,
         }
     }
 }
@@ -175,7 +182,7 @@ struct EfiTableHeader {
     revision: u32,
     header_size: u32,
     crc32: u32,
-    reserved: u32,  
+    reserved: u32,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -200,11 +207,13 @@ struct EfiBootServices {
     _restore_tpl: usize,
     _allocate_pages: usize,
     _free_pages: usize,
-    get_memory_map: unsafe fn(  memory_map_size: &mut usize,
-                                memory_map:      *mut u8,
-                                map_key:         &mut usize,
-                                descriptor_size: &mut usize,
-                                descriptor_version: &mut u32) -> EfiStatus,
+    get_memory_map: unsafe fn(
+        memory_map_size: &mut usize,
+        memory_map: *mut u8,
+        map_key: &mut usize,
+        descriptor_size: &mut usize,
+        descriptor_version: &mut u32,
+    ) -> EfiStatus,
     _allocale_pool: usize,
     _free_pool: usize,
     _create_event: usize,
@@ -226,31 +235,34 @@ struct EfiBootServices {
     _start_image: usize,
     _exit: usize,
     _unload_image: usize,
-    exit_boot_services: unsafe fn(image_handle: EfiHandle,
-                                    map_key:    usize) -> EfiStatus,
+    exit_boot_services: unsafe fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus,
 }
 
 #[repr(C)]
 struct EfiSimpleTextInputProtocol {
-    reset: unsafe fn (this: *const EfiSimpleTextInputProtocol,
-                        extended_verification: bool) -> EfiStatus,
-    read_keystroke: unsafe fn(this: *const EfiSimpleTextInputProtocol,
-                                key: *mut EfiInputKey) -> EfiStatus,
+    reset: unsafe fn(
+        this: *const EfiSimpleTextInputProtocol,
+        extended_verification: bool,
+    ) -> EfiStatus,
+    read_keystroke:
+        unsafe fn(this: *const EfiSimpleTextInputProtocol, key: *mut EfiInputKey) -> EfiStatus,
     _wait_for_key: usize,
 }
 
 #[repr(C)]
 struct EfiSimpleTextOutputProtocol {
-    reset: unsafe fn (this: *const EfiSimpleTextOutputProtocol,
-        extended_verification: bool) -> EfiStatus,
-    
+    reset: unsafe fn(
+        this: *const EfiSimpleTextOutputProtocol,
+        extended_verification: bool,
+    ) -> EfiStatus,
+
     // Writes a string to the output device
-    output_string: unsafe fn (this: *const EfiSimpleTextOutputProtocol,
-                                string:*const u16) -> EfiStatus,
+    output_string:
+        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatus,
     // Verifies that all characters in a string can beoutput to the target
     // device.
-    test_string: unsafe fn(this: *const EfiSimpleTextOutputProtocol,
-                                string: *const u16) -> EfiStatus,
+    test_string:
+        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatus,
     _query_mode: usize,
     _set_mode: usize,
     _set_attribute: usize,

@@ -5,13 +5,12 @@ pub struct ScreenWriter;
 
 impl Write for ScreenWriter {
     fn write_str(&mut self, s: &str) -> Result {
-        crate:: efi::output_string(s);
+        crate::efi::output_string(s);
         Ok(())
     }
 }
 
-
-/// The standard Rust `print!()` macro! 
+/// The standard Rust `print!()` macro!
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {
