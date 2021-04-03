@@ -7,6 +7,8 @@
 mod print;
 mod core_requirements;
 mod efi;
+mod mm;
+mod acpi;
 use core::panic::PanicInfo;
 use efi::{EfiHandle, EfiStatus, EfiSystemTable};
 

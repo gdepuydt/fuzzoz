@@ -59,7 +59,16 @@ pub fn output_string(string: &str) {
     }
 }
 
-pub fn get_memory_map(image_handle: EfiHandle) {
+pub fn get_acpi_base() {
+    let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
+
+    if system_table.is_null() {
+        return;
+    }
+
+}
+
+pub fn get_memory_map(_image_handle: EfiHandle) {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
@@ -97,20 +106,20 @@ pub fn get_memory_map(image_handle: EfiHandle) {
             if typ.avail_post_exit_boot_service() {
                 free_memory += entry.number_of_pages * 4096;
             }
-            /*
+            
             print!(
                 "{:016x} {:016x} {:?}\n",
                 entry.physical_start,
                 entry.number_of_pages * 4096,
                 typ
-            );*/
+            );
         }
 
         // Exit Boot serices
-        let ret = ((*(*system_table).boot_services).exit_boot_services)(
+        /*let ret = ((*(*system_table).boot_services).exit_boot_services)(
             image_handle,
             key
-        );
+        );*/
 
         assert!(ret.0 == 0, "Failed to exit boot services: {:?}", ret);
 
@@ -118,6 +127,8 @@ pub fn get_memory_map(image_handle: EfiHandle) {
         EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
 
     }
+
+    print!("Total free bytes: {}\n", free_memory);
 }
 
 #[derive(Clone, Copy, Debug)]
