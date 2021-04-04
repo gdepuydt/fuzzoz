@@ -1,4 +1,4 @@
-#![feature(asm, panic_info_message, core_intrinsics)]
+#![feature(asm, panic_info_message, core_intrinsics, bool_to_option)]
 #![allow(clippy::print_with_newline, non_snake_case, dead_code)]
 #![no_std]
 #![no_main]
@@ -38,7 +38,9 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTabl
     // in other places such as a `print!` macro
     unsafe { efi::register_system_table(system_table); }
 
-    efi::get_memory_map(image_handle);
+    efi::get_acpi_base();
+
+    // efi::get_memory_map(image_handle);
 
     panic!("Moose!");
 }
