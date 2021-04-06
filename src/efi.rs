@@ -59,11 +59,12 @@ pub fn output_string(string: &str) {
     }
 }
 
-pub fn get_acpi_base() {
+/// Get the base of the ACPI table RSD PTR (RSDP)
+pub fn get_acpi_table() -> Option<usize> {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
-        return;
+        return None;
     }
 
     // Convert system table into Rust reference
@@ -75,13 +76,19 @@ pub fn get_acpi_base() {
     const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid(
         0x8868e871, 0xe4f1, 0x11d3, [0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81]);
 
-    // Get the ACPI table pointer
-    let acpi = tables.iter()
-        .find_map(|EfiConfigurationTable{guid, table}| {
-            (guid == &EFI_ACPI_TABLE_GUID).then_some(table) 
-    });
+    /// ACPI 1.0 or newer tables should use EFI_ACPI_TABLE_GUID
+    const ACPI_TABLE_GUID: EfiGuid = EfiGuid(
+        0xeb9d2d30, 0x2d88, 0x11d3, [0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d]);
 
-    print!("ACPI Table pointer: {:?}", acpi.unwrap());
+    // First look for the ACPI 2.0 table pointer, if we can't find it, then look
+    // for the ACPI 1.0 table pointer
+    tables.iter()
+        .find_map(|EfiConfigurationTable{guid, table}| {
+            (guid == &EFI_ACPI_TABLE_GUID).then_some(*table) 
+    }).or_else(|| { tables.iter()
+        .find_map(|EfiConfigurationTable{guid, table}| {
+            (guid == &ACPI_TABLE_GUID).then_some(*table) })
+        })
 }
 
 pub fn get_memory_map(_image_handle: EfiHandle) {

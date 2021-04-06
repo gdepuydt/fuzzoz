@@ -38,7 +38,9 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTabl
     // in other places such as a `print!` macro
     unsafe { efi::register_system_table(system_table); }
 
-    efi::get_acpi_base();
+    unsafe {
+        acpi::init();
+    };
 
     // efi::get_memory_map(image_handle);
 

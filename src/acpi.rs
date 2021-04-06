@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicU32, Ordering, AtomicU8};
 use core::convert::TryInto;
 
 use crate::mm::{self, PhysAddr};
+use crate::efi;
 
 /// Maximum number of cores allowed on the system
 pub const MAX_CORES: usize = 1024;
@@ -74,71 +75,10 @@ unsafe fn parse_header(addr: PhysAddr) -> (Header, PhysAddr, usize) {
 /// Initialize the ACPI subsystem. Mainly looking for APICs and memory maps.
 /// Brings up all cores on the system
 pub unsafe fn init() {
-    // Specification says we have to scan the first 1 KiB of the EBDA and the
-    // range from 0xe0000 to 0xfffff
-
-    // Compute the regions we need to scan for the RSDP
-    let regions = [
-        // From 0xe0000 to 0xfffff
-        (0xe0000, 0xfffff)
-    ];
-
-    // Holds the RSDP structure if found
-    let mut rsdp = None;
-
-    'rsdp_search: for &(start, end) in &regions {
-        // 16-byte align the start address upwards
-        let start = (start + 0xf) & !0xf;
-
-        // Go through each 16 byte offset in the range specified
-        for paddr in (start..=end).step_by(16) {
-            // Compute the end address of RSDP structure
-            let struct_end = start + size_of::<Rsdp>() as u64 - 1;
-
-            // Break out of the scan if we are out of bounds of this region
-            if struct_end > end {
-                break;
-            }
-
-            // Read the table
-            let table = mm::read_phys::<Rsdp>(PhysAddr(paddr));
-            if &table.signature != b"RSD PTR " {
-                continue;
-            }
-            
-            // Read the tables bytes so we can checksum it
-            let table_bytes = mm::read_phys::
-                <[u8; size_of::<Rsdp>()]>(PhysAddr(paddr));
-
-            // Checksum the table
-            let sum = table_bytes.iter()
-                .fold(0u8, |acc, &x| acc.wrapping_add(x));
-            if sum != 0 {
-                continue;
-            }
-
-            // Checksum the extended RSDP if needed
-            if table.revision > 0 {
-                // Read the tables bytes so we can checksum it
-                const N: usize = size_of::<RsdpExtended>();
-                let extended_bytes = mm::read_phys::<[u8; N]>(PhysAddr(paddr));
-
-                // Checksum the table
-                let sum = extended_bytes.iter()
-                    .fold(0u8, |acc, &x| acc.wrapping_add(x));
-                if sum != 0 {
-                    continue;
-                }
-            }
-
-            rsdp = Some(table);
-            break 'rsdp_search;
-        }
-    }
-
-    // Get access to the RSDP
-    let rsdp = rsdp.expect("Failed to find RSDP for ACPI");
-
+    
+    // Get the ACPI table base from EFI 
+    let rsdp = efi::get_acpi_table().expect("Failed to find ACPI table.");
+    
     /* 
     // Parse out the RSDT
     let (rsdt, rsdt_payload, rsdt_size) =
