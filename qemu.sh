@@ -3,6 +3,8 @@ set -e
 
 cargo build
 qemu-system-x86_64 \
+    -machine q35 \
+    -smp 6  \
     -enable-kvm \
     -m 128 \
     -nographic \

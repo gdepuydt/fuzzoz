@@ -109,6 +109,7 @@ pub fn get_memory_map(_image_handle: EfiHandle) {
         let mut mdesc_size = 0;
         let mut mdesc_version = 0;
 
+        // Get the memory map
         let ret = ((*(*system_table).boot_services).get_memory_map)(
             &mut size,
             memory_map.as_mut_ptr(),

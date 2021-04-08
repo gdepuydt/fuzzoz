@@ -2,24 +2,52 @@
 //! about CPU topography and NUMA memory regions
 
 use core::mem::size_of;
-use core::sync::atomic::{AtomicU32, Ordering, AtomicU8};
-use core::convert::TryInto;
 
 use crate::mm::{self, PhysAddr};
 use crate::efi;
 
-/// Maximum number of cores allowed on the system
-pub const MAX_CORES: usize = 1024;
-
-/// In-memory representation of an RSDP ACPI structure
+/// Root System Description Pointer (RSDP) structure.
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
 struct Rsdp {
-    signature:         [u8; 8],
-    checksum:          u8,
-    oem_id:            [u8; 6],
-    revision:          u8,
-    rsdt_addr:         u32,
+    
+    /// "RSD PTR "
+    signature: [u8; 8],
+
+    /// his is the checksum of the fields defined in the ACPI 1.0 specification.
+    /// This includes only the first 20 bytes of this table, bytes 0 to 19, 
+    /// including the checksum field. These bytes must sum to zero.
+    checksum: u8,
+    
+    /// An OEM-supplied string that identifies the OEM.
+    oem_id: [u8; 6],
+    
+    /// The revision of this structure. Larger revision numbers are backward
+    /// compatible to lower revision numbers. The ACPI version
+    /// 1.0 revision number of this table is zero. The ACPI version 1.0
+    /// RSDP Structure only includes the first 20 bytes of this table, bytes
+    /// 0 to 19. It does not include the Length field and beyond. 
+    /// The current value for this field is 2.
+    revision: u8,
+    
+    /// 32 bit physical address of the RSDT
+    rsdt_addr: u32,
+
+    /// The length of the table, in bytes, including the header, starting
+    /// from offset 0. This field is used to record the size of the entire
+    /// table. This field is not available in the ACPI version 1.0 RSDP 
+    /// structure
+    length: u32,
+
+    /// 64 bit physical address of the XSDT.
+    xsdt_addr: u64,
+
+    /// This is a checksum of the entire table, including both checksum fields.
+    extended_checksum: u8,
+
+    /// Reserved field.
+    reserved: [u8;3],
+
 }
 
 /// In-memory representation of an Extended RSDP ACPI structure
@@ -77,29 +105,31 @@ unsafe fn parse_header(addr: PhysAddr) -> (Header, PhysAddr, usize) {
 pub unsafe fn init() {
     
     // Get the ACPI table base from EFI 
-    let rsdp = efi::get_acpi_table().expect("Failed to find ACPI table.");
+    let rsdp_addr = efi::get_acpi_table()
+        .expect("Failed to get RSDP address from EFI");
+    let rsdp = core::ptr::read_unaligned(rsdp_addr as *const Rsdp);
     
-    /* 
-    // Parse out the RSDT
-    let (rsdt, rsdt_payload, rsdt_size) =
-        parse_header(PhysAddr(rsdp.rsdt_addr as u64));
+    // Check information about the RSDP
+    assert!(&rsdp.signature == b"RSD PTR ", "RSDT signature mismatch.");
+    assert!(rsdp.length as usize >= size_of::<Rsdp>(), "RSDP size invalid." );
+    assert!(rsdp.revision >= 1, "Minimum ACPI 2.0 version required.");
 
-    // Check the signature and 
-    assert!(&rsdt.signature == b"RSDT", "RSDT signature mismatch");
-    assert!((rsdt_size % size_of::<u32>()) == 0,
-        "Invalid table size for RSDT");
-    let rsdt_entries = rsdt_size / size_of::<u32>();
+    // Parse out the XSDT
+    let (xsdt, xsdt_payload, xsdt_size) =
+        parse_header(PhysAddr(rsdp.xsdt_addr));
 
-    // Set up the structures we're interested as parsing out as `None` as some
-    // of them may or may not be present.
-    let mut apics          = None;
-    let mut apic_domains   = None;
-    let mut memory_domains = None;
+    // Check the signature and alignment of the structure
+    assert!(&xsdt.signature == b"XSDT", "XSDT alignment mismatch.");
+    assert!((xsdt_size % size_of::<u64>()) == 0,
+    "Invalid table size for XSDT");
+    
+    let xsdt_entries = xsdt_size / size_of::<u64>();
+    
 
-    // Go through each table described by the RSDT
-    for entry in 0..rsdt_entries {
-        // Get the physical address of the RSDP table entry
-        let entry_paddr = rsdt_payload.0 as usize + entry * size_of::<u32>();
+    // Go through each table described by the XSDT
+    for entry in 0..xsdt_entries {
+        // Get the physical address of the XSDP table entry
+        let entry_paddr = xsdt_payload.0 as usize + entry * size_of::<u64>();
 
         // Get the pointer to the table
         let table_ptr: u32 = mm::read_phys(PhysAddr(entry_paddr as u64));
@@ -109,75 +139,17 @@ pub unsafe fn init() {
 
         if &signature == b"APIC" {
             // Parse the MADT
-            assert!(apics.is_none(), "Multiple MADT ACPI table entries");
-            apics = Some(parse_madt(PhysAddr(table_ptr as u64)));
+            parse_madt(PhysAddr(table_ptr as u64));
         } else if &signature == b"SRAT" {
             // Parse the SRAT
-            assert!(apic_domains.is_none() && memory_domains.is_none(),
-                "Multiple SRAT ACPI table entries");
-            let (ad, md) = parse_srat(PhysAddr(table_ptr as u64));
-            apic_domains   = Some(ad);
-            memory_domains = Some(md);
+            parse_srat(PhysAddr(table_ptr as u64)); 
         }
     }
-
-    if let (Some(ad), Some(md)) = (apic_domains, memory_domains) {
-        // Register APIC to domain mappings
-        for (&apic, &node) in ad.iter() {
-            APIC_TO_DOMAIN[apic as usize].store(node.try_into().unwrap(),
-                Ordering::Relaxed);
-        }
-
-        // Notify the memory manager of the known APIC -> NUMA mappings
-        crate::mm::register_numa_nodes(ad, md);
-    }
-
-    // Set the total core count based on the number of detected APICs on the
-    // system. If no APICs were mentioned by ACPI, then we can simply say there
-    // is only one core.
-    TOTAL_CORES.store(apics.as_ref().map(|x| x.len() as u32).unwrap_or(1),
-                      Ordering::SeqCst);
-
-    // Initialize the state of all the known APICs
-    if let Some(apics) = &apics {
-        for &apic_id in apics {
-            APICS[apic_id as usize].store(ApicState::Offline as u8,
-                                          Ordering::SeqCst);
-        }
-    }
-
-    // Set that our core is online
-    APICS[core!().apic_id().unwrap() as usize]
-        .store(ApicState::Online as u8, Ordering::SeqCst);
-
-    // Launch all other cores
-    if let Some(valid_apics) = apics {
-        // Get exclusive access to the APIC for this core
-        let mut apic = core!().apic().lock();
-        let apic = apic.as_mut().unwrap();
-
-        // Go through all APICs on the system
-        for apic_id in valid_apics {
-            // We don't want to start ourselves
-            if core!().apic_id().unwrap() == apic_id { continue; }
-
-            // Mark the core as launched
-            set_core_state(apic_id, ApicState::Launched);
-
-            // Launch the core
-            apic.ipi(apic_id, 0x4500);
-            apic.ipi(apic_id, 0x4608);
-            apic.ipi(apic_id, 0x4608);
-
-            // Wait for the core to come online
-            while core_state(apic_id) != ApicState::Online {}
-        }
-    } */
 }
-/*
+
 /// Parse the MADT out of the ACPI tables
 /// Returns a vector of all usable APIC IDs
-unsafe fn parse_madt(ptr: PhysAddr) -> Vec<u32> {
+unsafe fn parse_madt(ptr: PhysAddr) {
     // Parse the MADT header
     let (_header, payload, size) = parse_header(ptr);
 
@@ -185,9 +157,6 @@ unsafe fn parse_madt(ptr: PhysAddr) -> Vec<u32> {
     // physical address of the ICS
     let mut ics = PhysAddr(payload.0 + 4 + 4);
     let end = payload.0 + size as u64;
-
-    // Create a new structure to hold the APICs that are usable
-    let mut apics = Vec::new();
 
     loop {
         /// Processor is ready for use
@@ -221,7 +190,7 @@ unsafe fn parse_madt(ptr: PhysAddr) -> Vec<u32> {
                 // a valid APIC
                 if (flags & APIC_ENABLED) != 0 ||
                         (flags & APIC_ONLINE_CAPABLE) != 0 {
-                    apics.push(apic_id as u32);
+                    // apics.push(apic_id as u32);
                 }
             }
             9 => {
@@ -236,7 +205,7 @@ unsafe fn parse_madt(ptr: PhysAddr) -> Vec<u32> {
                 // a valid APIC
                 if (flags & APIC_ENABLED) != 0 ||
                         (flags & APIC_ONLINE_CAPABLE) != 0 {
-                    apics.push(apic_id);
+                    // apics.push(apic_id);
                 }
             }
             _ => {
@@ -248,26 +217,17 @@ unsafe fn parse_madt(ptr: PhysAddr) -> Vec<u32> {
         ics = PhysAddr(ics.0 + len as u64);
     }
 
-    apics
 }
 
 /// Parse the SRAT out of the ACPI tables
 /// Returns a tuple of (apic -> domain, memory domain -> phys_ranges)
-unsafe fn parse_srat(ptr: PhysAddr) ->
-        (BTreeMap<u32, u32>, BTreeMap<u32, RangeSet>) {
+unsafe fn parse_srat(ptr: PhysAddr) {
     // Parse the SRAT header
     let (_header, payload, size) = parse_header(ptr);
 
     // Skip the 12 reserved bytes to get to the SRA structure
     let mut sra = PhysAddr(payload.0 + 4 + 8);
     let end = payload.0 + size as u64;
-
-    // Mapping of proximity domains to their memory ranges
-    let mut memory_affinities:
-        BTreeMap<u32, RangeSet> = BTreeMap::new();
-    
-    // Mapping of APICs to their proximity domains
-    let mut apic_affinities: BTreeMap<u32, u32> = BTreeMap::new();
 
     loop {
         /// The entry is enabled and present. Some BIOSes may staticially
@@ -304,8 +264,7 @@ unsafe fn parse_srat(ptr: PhysAddr) ->
 
                 // Log the affinity record
                 if (flags & FLAGS_ENABLED) != 0 {
-                    assert!(apic_affinities.insert(apic_id as u32, domain)
-                            .is_none(), "Duplicate LAPIC affinity domain");
+
                 }
             }
             1 => {
@@ -323,13 +282,6 @@ unsafe fn parse_srat(ptr: PhysAddr) ->
                 if size > 0 {
                     // Log the affinity record
                     if (flags & FLAGS_ENABLED) != 0 {
-                        memory_affinities.entry(domain).or_insert_with(|| {
-                            RangeSet::new()
-                        }).insert(Range {
-                            start: base.0,
-                            end:   base.0.checked_add(size.checked_sub(1)
-                                                      .unwrap()).unwrap()
-                        });
                     }
                 }
             }
@@ -344,8 +296,6 @@ unsafe fn parse_srat(ptr: PhysAddr) ->
 
                 // Log the affinity record
                 if (flags & FLAGS_ENABLED) != 0 {
-                    assert!(apic_affinities.insert(apic_id, domain)
-                            .is_none(), "Duplicate APIC affinity domain");
                 }
             }
             _ => {
@@ -355,7 +305,4 @@ unsafe fn parse_srat(ptr: PhysAddr) ->
         // Go to the next ICS entry
         sra = PhysAddr(sra.0 + len as u64);
     }
-
-    (apic_affinities, memory_affinities)
 }
-*/
