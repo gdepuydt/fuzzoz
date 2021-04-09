@@ -69,25 +69,38 @@ pub fn get_acpi_table() -> Option<usize> {
 
     // Convert system table into Rust reference
     let tables = unsafe {
-         core::slice::from_raw_parts((*system_table).tables, (*system_table).number_of_tables)
+        core::slice::from_raw_parts((*system_table).tables, (*system_table).number_of_tables)
     };
 
     /// ACPI 2.0 or newer tables should use EFI_ACPI_TABLE_GUID
     const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid(
-        0x8868e871, 0xe4f1, 0x11d3, [0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81]);
+        0x8868e871,
+        0xe4f1,
+        0x11d3,
+        [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81],
+    );
 
     /// ACPI 1.0 or newer tables should use EFI_ACPI_TABLE_GUID
     const ACPI_TABLE_GUID: EfiGuid = EfiGuid(
-        0xeb9d2d30, 0x2d88, 0x11d3, [0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d]);
+        0xeb9d2d30,
+        0x2d88,
+        0x11d3,
+        [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d],
+    );
 
     // First look for the ACPI 2.0 table pointer, if we can't find it, then look
     // for the ACPI 1.0 table pointer
-    tables.iter()
-        .find_map(|EfiConfigurationTable{guid, table}| {
-            (guid == &EFI_ACPI_TABLE_GUID).then_some(*table) 
-    }).or_else(|| { tables.iter()
-        .find_map(|EfiConfigurationTable{guid, table}| {
-            (guid == &ACPI_TABLE_GUID).then_some(*table) })
+    tables
+        .iter()
+        .find_map(|EfiConfigurationTable { guid, table }| {
+            (guid == &EFI_ACPI_TABLE_GUID).then_some(*table)
+        })
+        .or_else(|| {
+            tables
+                .iter()
+                .find_map(|EfiConfigurationTable { guid, table }| {
+                    (guid == &ACPI_TABLE_GUID).then_some(*table)
+                })
         })
 }
 
@@ -130,7 +143,7 @@ pub fn get_memory_map(_image_handle: EfiHandle) {
             if typ.avail_post_exit_boot_service() {
                 free_memory += entry.number_of_pages * 4096;
             }
-            
+
             print!(
                 "{:016x} {:016x} {:?}\n",
                 entry.physical_start,
@@ -149,7 +162,6 @@ pub fn get_memory_map(_image_handle: EfiHandle) {
 
         // Kill the EFI system table
         EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
-
     }
 
     print!("Total free bytes: {}\n", free_memory);
@@ -192,10 +204,13 @@ enum EfiMemoryType {
 
 impl EfiMemoryType {
     fn avail_post_exit_boot_service(&self) -> bool {
-        matches!(self, EfiMemoryType::BootServiceCode
-            | EfiMemoryType::BootServiceData
-            | EfiMemoryType::ConventionalMemory
-            | EfiMemoryType::PersistentMemory)
+        matches!(
+            self,
+            EfiMemoryType::BootServiceCode
+                | EfiMemoryType::BootServiceData
+                | EfiMemoryType::ConventionalMemory
+                | EfiMemoryType::PersistentMemory
+        )
     }
 }
 
@@ -318,7 +333,7 @@ struct EfiSimpleTextOutputProtocol {
     _mode: usize,
 }
 
-/// Provides access to UEFI Boot Services, UEFI Runtime Services, consoles, 
+/// Provides access to UEFI Boot Services, UEFI Runtime Services, consoles,
 /// firmware vendor information, and the system configuration tables.
 #[repr(C)]
 pub struct EfiSystemTable {
@@ -333,12 +348,12 @@ pub struct EfiSystemTable {
     console_error: *const EfiSimpleTextOutputProtocol,
     _runtime_services: usize,
     boot_services: *const EfiBootServices,
-    
+
     number_of_tables: usize,
     tables: *const EfiConfigurationTable,
 }
 
-/// Contains a set of GUID/pointer pairs comprised of the 
+/// Contains a set of GUID/pointer pairs comprised of the
 /// ConfigurationTable field in the EFI System Table.
 #[derive(Debug)]
 #[repr(C)]
@@ -346,22 +361,22 @@ struct EfiConfigurationTable {
     // The 128-bit GUID value that uniquely identifies the system configuration
     // table.
     guid: EfiGuid,
-    // A pointer to the table associated with VendorGuid (`guid`). Type of the 
-    // memory that is used to store the table as well as whether this 
-    // pointer is a physical address or a virtual address during runtime 
-    // (whether or not a particular address reported in the table gets fixed 
-    // up when a call to SetVirtualAddressMap() is made) is 
-    // determined by the VendorGuid. Unless otherwise specified, 
-    // memory type of the table buffer is defined by the guidelines set 
-    // forth in the Calling Conventions section in Chapter 2. It is the 
-    // responsibility of the specification defining the VendorTable to 
-    // specify additional memory type requirements (if any) and whether 
-    // to convert the addresses reported in the table. Any required address 
-    // conversion is a responsibility of the driver that publishes 
+    // A pointer to the table associated with VendorGuid (`guid`). Type of the
+    // memory that is used to store the table as well as whether this
+    // pointer is a physical address or a virtual address during runtime
+    // (whether or not a particular address reported in the table gets fixed
+    // up when a call to SetVirtualAddressMap() is made) is
+    // determined by the VendorGuid. Unless otherwise specified,
+    // memory type of the table buffer is defined by the guidelines set
+    // forth in the Calling Conventions section in Chapter 2. It is the
+    // responsibility of the specification defining the VendorTable to
+    // specify additional memory type requirements (if any) and whether
+    // to convert the addresses reported in the table. Any required address
+    // conversion is a responsibility of the driver that publishes
     // corresponding configuration table.
     table: usize,
 }
-/// 128-bit buffer containing a unique identifier value. Unless otherwise 
+/// 128-bit buffer containing a unique identifier value. Unless otherwise
 /// specified, aligned on a 64-bit boundary.
 #[derive(Debug, PartialEq, Eq)]
 #[repr(C)]

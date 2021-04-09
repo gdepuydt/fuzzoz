@@ -5,10 +5,10 @@
 
 #[macro_use]
 mod print;
+mod acpi;
 mod core_requirements;
 mod efi;
 mod mm;
-mod acpi;
 use core::panic::PanicInfo;
 use efi::{EfiHandle, EfiStatus, EfiSystemTable};
 
@@ -36,7 +36,9 @@ fn panic(info: &PanicInfo) -> ! {
 extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
     // First,  register the EFI system table in a global so we can use it
     // in other places such as a `print!` macro
-    unsafe { efi::register_system_table(system_table); }
+    unsafe {
+        efi::register_system_table(system_table);
+    }
 
     unsafe {
         acpi::init();
