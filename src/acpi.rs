@@ -1,17 +1,33 @@
 //! An very lightweight ACPI implementation for extracting basic information
 //! about CPU topography and NUMA memory regions
 
+use core::intrinsics::size_of;
+
 use crate::efi;
 use crate::mm::{self, PhysAddr};
 
 /// A `Result` type that wraps and ACPI error
 type Result<T> = core::result::Result<T, Error>;
 
+/// Different types of ACPI tables, mainly used for error information
+#[derive(Debug)]
+pub enum Table {
+    /// The root system description pointer
+    Rsdp,
+}
+
 /// Errors from ACPI table parsing
+#[derive(Debug)]
 pub enum Error {
     /// The ACPI table address was not reported by UEFI and thus we were unable
     /// tofind the RSDP
     RsdpNotFound,
+
+    /// An ACPI table had an invalid checksum
+    ChecksumMismatch(Table),
+
+    /// An ACPI table did not match the correct signature
+    SignatureMismatch(Table),
 }
 
 /// Root System Description Pointer (RSDP) structure for ACPI 1.0.
@@ -45,6 +61,20 @@ impl Rsdp {
     unsafe fn from_addr(paddr: PhysAddr) -> Result<Self> {
         // Read the base RSDP structure
         let rsdp = mm::read_phys::<Rsdp>(paddr);
+
+        let bytes = core::slice::from_raw_parts(&rsdp as *const Rsdp as *const u8, size_of::<Rsdp>());
+        
+        // Compute and check the checksum
+        let chk = bytes.iter().fold(0u8, |acc, &x| acc.wrapping_add(x));
+        if chk != 0 {
+            return Err(Error::ChecksumMismatch(Table::Rsdp));
+        }
+
+        // Check the signature
+        if &rsdp.signature != b"RSD PTR " {
+            return Err(Error::SignatureMismatch(Table::Rsdp));
+        }
+
         todo!()
     }
 }
