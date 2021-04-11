@@ -10,12 +10,29 @@ use crate::mm::{self, PhysAddr};
 type Result<T> = core::result::Result<T, Error>;
 
 /// Different types of ACPI tables, mainly used for error information.
-#[derive(Debug)]
-pub enum Table {
+#[derive(Clone, Copy, Debug)]
+pub enum TableType {
     /// The root system description pointer (ACPI 1.0).
     Rsdp,
     /// The extended root systen description pointer (ACPI 2.0).
     RsdpExtended,
+    /// Extended Systen Description Table
+    Xsdt,
+
+
+    /// Unknown table type
+    Unknown([u8;4]),
+}
+
+impl From<[u8;4]> for TableType {
+    fn from(val: [u8;4]) -> Self {
+        match &val {
+            b"XSDT" => Self::Xsdt,
+            
+            _       => Self::Unknown(val),
+        }
+    }
+
 }
 
 /// Errors from ACPI table parsing.
@@ -26,17 +43,35 @@ pub enum Error {
     RsdpNotFound,
 
     /// An ACPI table had an invalid checksum.
-    ChecksumMismatch(Table),
+    ChecksumMismatch(TableType),
 
     /// An ACPI table did not match the correct signature.
-    SignatureMismatch(Table),
+    SignatureMismatch(TableType),
 
     /// The ACPI table did not match the expected length
-    LengthMismatch(Table),
+    LengthMismatch(TableType),
 
     /// The Extended RSDP was attempted to be accessed however the ACPI version
     /// for this system was too old to support it. ACPI 2.0 is required.
     RevisionTooOld,
+}
+
+
+/// Compute an ACPI checksum on physical memory 
+unsafe fn checksum(addr: PhysAddr, size: usize, typ: TableType) -> Result<()> {
+
+    // Compute and validate the checksum
+    let chk = (0 .. size as u64).fold(0u8, |acc, offset| {
+        acc.wrapping_add(mm::read_phys::<u8>(PhysAddr(addr.0 + offset)))
+    });
+
+    if chk == 0 {
+        Ok (())
+    } else {
+        Err(Error::ChecksumMismatch(typ))
+    }
+
+    
 }
 
 /// Root System Description Pointer (RSDP) structure for ACPI 1.0.
@@ -67,21 +102,17 @@ struct Rsdp {
 
 impl Rsdp {
     /// Load an Rsdp structure from `addr`.
-    unsafe fn from_addr(paddr: PhysAddr) -> Result<Self> {
-        // Read the base RSDP structure.
-        let rsdp = mm::read_phys::<Rsdp>(paddr);
-
-        let bytes = core::slice::from_raw_parts(&rsdp as *const Rsdp as *const u8, size_of::<Rsdp>());
+    unsafe fn from_addr(addr: PhysAddr) -> Result<Self> {
         
-        // Compute and check the checksum.
-        let chk = bytes.iter().fold(0u8, |acc, &x| acc.wrapping_add(x));
-        if chk != 0 {
-            return Err(Error::ChecksumMismatch(Table::Rsdp));
-        }
+        // Validate the checksum
+        checksum(addr,size_of::<Self>(), TableType::Rsdp)?;
+        
+        // Get the RSDP table
+        let rsdp = mm::read_phys::<Self>(addr);
 
         // Check the signature.
         if &rsdp.signature != b"RSD PTR " {
-            return Err(Error::SignatureMismatch(Table::Rsdp));
+            return Err(Error::SignatureMismatch(TableType::Rsdp));
         }
 
         // Return the RSDP.
@@ -122,28 +153,23 @@ impl RsdpExtended {
             return Err(Error::RevisionTooOld);
         }
 
-        // Now read the extended RSDP 
-        let rsdp = mm::read_phys::<RsdpExtended>(addr);
-        let bytes = core::slice::from_raw_parts(
-            &rsdp as *const _ as *const u8, size_of::<RsdpExtended>());
+        // Validate the checksum
+        checksum(addr, size_of::<Self>(), TableType::RsdpExtended)?;
+
+        // Get the extended RSDP table
+        let rsdp = mm::read_phys::<Self>(addr);
 
         // Check the size
-        if rsdp.length as usize != size_of::<RsdpExtended>() {
-            return Err(Error::LengthMismatch(Table::RsdpExtended));
+        if rsdp.length as usize != size_of::<Self>() {
+            return Err(Error::LengthMismatch(TableType::RsdpExtended));
         }
 
-        // Compute and check the checksum.
-        let chk = bytes.iter().fold(
-            0u8, |acc, &x| acc.wrapping_add(x));
-        if chk != 0 { return Err(Error::ChecksumMismatch(Table::RsdpExtended));}
-        
         // Return the RSDP
         Ok(rsdp)
     }
 }
 
 /// In-memory representation of an ACPI table header.
-#[derive(Clone, Copy)]
 #[repr(C, packed)]
 struct Table {
     
@@ -186,8 +212,18 @@ struct Table {
 
 impl Table {
     // From an Addr check the validity of the Table
-    fn from_addr(addr: PhysAddr) -> Result<Self> {
-        todo!()
+    unsafe fn from_addr(addr: PhysAddr) -> Result<(Self, TableType)> {
+        
+        // Read the table
+        let table = mm::read_phys::<Self>(addr);
+        
+        // Get the type of this table
+        let typ = TableType::from(table.signature);
+        
+        // Validate the checksum
+        checksum(addr, table.length as usize, typ)?;
+
+        Ok((table, typ))
     }
 }
 
@@ -198,5 +234,9 @@ pub unsafe fn init() -> Result<()> {
 
     // Validate and get the RSDP.
     let rsdp = RsdpExtended::from_addr(PhysAddr(rsdp_addr as u64))?;
+    
+    // Get the XSDT
+    let _xsdt = Table::from_addr(PhysAddr(rsdp.xsdt_addr))?;
+    
     Ok(())
 }

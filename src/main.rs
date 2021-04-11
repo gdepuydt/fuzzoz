@@ -33,7 +33,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
-extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
+extern "C" fn efi_main(_image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
     // First,  register the EFI system table in a global so we can use it
     // in other places such as a `print!` macro
     unsafe {
@@ -41,7 +41,7 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTabl
     }
 
     unsafe {
-        acpi::init();
+        acpi::init().expect("oopsie");
     };
 
     // efi::get_memory_map(image_handle);
