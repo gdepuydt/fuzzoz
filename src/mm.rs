@@ -10,8 +10,25 @@ pub struct PhysSlice(PhysAddr, usize);
 
 impl PhysSlice {
     /// Create a new slice to physical memory
-    pub unsafe fn new( addr: PhysAddr, size: usize) -> Self {
-        PhysSlice(addr,size)
+    pub unsafe fn new(addr: PhysAddr, size: usize) -> Self {
+        PhysSlice(addr, size)
+    }
+
+    /// Get the remaining length of the slice
+    pub fn len(&self) -> usize {
+        self.1
+    }
+
+    /// Discard bytes from the slice by updating the pointer and length 
+    pub fn discard(&mut self, bytes: usize) -> Result<(), ()> {
+        if self.1 >= bytes {
+            // Update the pointer and length
+            (self.0).0 += bytes as u64; 
+            self.1 -= bytes;
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     /// Read a `T` from the slice, updating the pointer
@@ -22,13 +39,13 @@ impl PhysSlice {
         }
 
         // Read the actual data
-        let data = read_phys_unaligned::<T>(self.0); 
+        let data = read_phys_unaligned::<T>(self.0);
 
-        // Compute the updated pointer
-        let new_ptr = self.0.0.checked_add(size_of::<T>() as u64).ok_or(())?;
+        // Update the pointer and length
+        (self.0).0 += size_of::<T>() as u64; 
+        self.1 -= size_of::<T>();
 
-        // Read the memory
-        todo!()
+        Ok(data)
     }
 }
 
