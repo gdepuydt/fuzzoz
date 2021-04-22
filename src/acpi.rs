@@ -10,7 +10,7 @@ use crate::mm::{self, PhysAddr};
 type Result<T> = core::result::Result<T, Error>;
 
 /// Different types of ACPI tables, mainly used for error information.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableType {
     /// The root system description pointer (ACPI 1.0).
     Rsdp,
@@ -18,7 +18,6 @@ pub enum TableType {
     RsdpExtended,
     /// Extended Systen Description Table
     Xsdt,
-
 
     /// Unknown table type
     Unknown([u8;4]),
@@ -210,20 +209,33 @@ struct Table {
     creator_revision: u32,
 }
 
+/// Attempt to process `addr` as an ACPI table. Return an Error if it is not a
+/// valid ACPI table. Returns (table header, table type, content address,
+/// payload_size).
 impl Table {
-    // From an Addr check the validity of the Table
-    unsafe fn from_addr(addr: PhysAddr) -> Result<(Self, TableType)> {
+    // From an Addr check the validity of the Table.
+    unsafe fn from_addr(addr: PhysAddr) -> Result<(Self, TableType, PhysAddr, usize)> {
         
-        // Read the table
+        // Read the table.
         let table = mm::read_phys::<Self>(addr);
         
-        // Get the type of this table
+        // Get the type of this table.
         let typ = TableType::from(table.signature);
         
-        // Validate the checksum
+        // Validate the checksum.
         checksum(addr, table.length as usize, typ)?;
 
-        Ok((table, typ))
+        // Make sure the table length is sane.
+        let header_size = size_of::<Self>();
+        if (table.length as usize) < header_size {
+            return Err(Error::LengthMismatch(typ));
+        }
+            
+        let payload_addr = PhysAddr(addr.0 + header_size as u64);
+        let payload_size = table.length as usize - header_size;
+        
+        Ok((table, typ, payload_addr, payload_size))
+        
     }
 }
 
@@ -236,7 +248,12 @@ pub unsafe fn init() -> Result<()> {
     let rsdp = RsdpExtended::from_addr(PhysAddr(rsdp_addr as u64))?;
     
     // Get the XSDT
-    let _xsdt = Table::from_addr(PhysAddr(rsdp.xsdt_addr))?;
-    
+    let (_, typ, addr, length) = 
+        Table::from_addr(PhysAddr(rsdp.xsdt_addr))?;
+    if typ != TableType::Xsdt {
+        return Err(Error::SignatureMismatch(typ));
+    }
+
+
     Ok(())
 }
