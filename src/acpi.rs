@@ -12,13 +12,22 @@ type Result<T> = core::result::Result<T, Error>;
 /// Different types of ACPI tables, mainly used for error information.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableType {
+    
     /// The root system description pointer (ACPI 1.0).
     Rsdp,
+    
     /// The extended root systen description pointer (ACPI 2.0).
     RsdpExtended,
+    
     /// Extended Systen Description Table
     Xsdt,
-
+    
+    /// Multiple APIC (Advanced Programmable Interrupt Controller) Description Table
+    Madt,
+    
+    /// System Resource Affinity Table
+    Srat, 
+    
     /// Unknown table type
     Unknown([u8;4]),
 }
@@ -27,7 +36,8 @@ impl From<[u8;4]> for TableType {
     fn from(val: [u8;4]) -> Self {
         match &val {
             b"XSDT" => Self::Xsdt,
-            
+            b"APIC" => Self::Madt,
+            b"SRAT" => Self::Srat,
             _       => Self::Unknown(val),
         }
     }
@@ -53,6 +63,13 @@ pub enum Error {
     /// The Extended RSDP was attempted to be accessed however the ACPI version
     /// for this system was too old to support it. ACPI 2.0 is required.
     RevisionTooOld,
+
+    // The XSDT table size was not evenly divisible by the array element size
+    XsdtBadEntries,
+
+    // An integer overflow occurred
+    IntegerOverflow,
+
 }
 
 
@@ -60,9 +77,10 @@ pub enum Error {
 unsafe fn checksum(addr: PhysAddr, size: usize, typ: TableType) -> Result<()> {
 
     // Compute and validate the checksum
-    let chk = (0 .. size as u64).fold(0u8, |acc, offset| {
-        acc.wrapping_add(mm::read_phys::<u8>(PhysAddr(addr.0 + offset)))
-    });
+    let chk = (0 .. size as u64).try_fold(0u8, |acc, offset| {
+        Ok(acc.wrapping_add(mm::read_phys::<u8>(PhysAddr(addr.0.checked_add(offset)
+            .ok_or(Error::IntegerOverflow)?))))
+    })?;
 
     if chk == 0 {
         Ok (())
@@ -227,17 +245,28 @@ impl Table {
 
         // Make sure the table length is sane.
         let header_size = size_of::<Self>();
-        if (table.length as usize) < header_size {
-            return Err(Error::LengthMismatch(typ));
-        }
             
-        let payload_addr = PhysAddr(addr.0 + header_size as u64);
-        let payload_size = table.length as usize - header_size;
+        let payload_addr = PhysAddr(addr.0.checked_add(header_size as u64)
+            .ok_or(Error::IntegerOverflow)?);
+        let payload_size = (table.length as usize).checked_sub(header_size)
+            .ok_or(Error::LengthMismatch(typ))?;
         
         Ok((table, typ, payload_addr, payload_size))
         
     }
 }
+
+struct Madt {
+
+}
+
+impl Madt {
+    /// Process the payload of an MADT based on a physical address and a size
+    unsafe fn from_addr(addr: PhysAddr, size: usize) -> Result<Self> {
+        panic!();
+    }
+}
+
 
 /// Initialize the ACPI subsystem.
 pub unsafe fn init() -> Result<()> {
@@ -248,12 +277,46 @@ pub unsafe fn init() -> Result<()> {
     let rsdp = RsdpExtended::from_addr(PhysAddr(rsdp_addr as u64))?;
     
     // Get the XSDT
-    let (_, typ, addr, length) = 
+    let (_, typ, xsdt, length) = 
         Table::from_addr(PhysAddr(rsdp.xsdt_addr))?;
     if typ != TableType::Xsdt {
         return Err(Error::SignatureMismatch(typ));
     }
 
+    // Make sure the XSDT size is modulo a 64-bit address size
+    if length % size_of::<u64>() != 0 {
+        return Err(Error::XsdtBadEntries);
+    }
+    // Get the number of entries in the XSDT
+    let entries = length /size_of::<u64>(); 
 
+    print!("XSDT entries {}\n", entries);
+
+    // Go through each table in the XSDT
+    for idx in 0..entries {
+        // Get the physical address of the XSDT entry
+        let entry_addr = idx.checked_mul(size_of::<u64>()).and_then(|x| {
+            x.checked_add(xsdt.0 as usize)
+        }).ok_or(Error::IntegerOverflow)?;
+
+        // Get the table address by reading the XSDT entry.
+        // It has been observed in OVMF that these addresses indeed can be unaligned. 
+        let table_addr = mm::read_phys_unaligned::<u64>(PhysAddr(entry_addr as u64));
+
+        // Parse and validate the table header
+        let (_, typ, data, length) = Table::from_addr(PhysAddr(table_addr))?;
+
+        match typ {
+            
+            TableType::Madt => {
+                Madt::from_addr(data, length)?;
+            },
+            
+            // Unknown
+            _ => {},
+        }
+
+
+    }
     Ok(())
 }
