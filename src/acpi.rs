@@ -279,14 +279,65 @@ impl Madt {
             match typ {
                 
                 0 => {
-                    
-                    // Processor local APIC structure
-                    let _acpi_processor_uid = 
-                        slice.consume::<u8>().map_err(|_| E)?;
-                    let apic_id = slice.consume::<u8>().map_err(|_| E)?;
-                    let flags = slice.consume::<u32>().map_err(|_| E)?;
+                    #[repr(C, packed)]
+                    struct LocalApic {
+                        
+                        /// The OS associates this local apic structure with a
+                        /// processor object in the namespace when the _UID
+                        /// child object of the processor's device object (or 
+                        /// ProcessorId listed in the processor declaration 
+                        /// operator) evaluates to a numeric value that matches
+                        /// the numeric value in the field 
+                        acpi_processor_uid: u8,
+                        
+                        /// The processor's local APIC ID.
+                        apic_id: u8,
+                        
+                        /// Local APIC flags
+                        ///
+                        /// Bit 0: Enabled (set if ready for use)
+                        /// Bit 1: Online capable (RAZ is enabled, indicates if 
+                        /// the APIC can be enabled at runtime)
+                        flags: u32,
+                    }
+
+                    // Ensure the data is the correct size
+                    if len as usize != size_of::<LocalApic>() {
+                        return Err(E);
+                    }
+
+                    let apic = slice.consume::<LocalApic>().map_err(|_| E);
                 }
                 
+                9 => {
+                    // Processor Local x2APIC structure
+                    #[repr(C, packed)]
+                    struct LocalX2apic{
+                        /// Reserved, must be zero
+                        reserved: u16,
+                        
+                        /// The processor's local x2APIC ID 
+                        x2apic_id: u32,
+                        
+                        /// Same as local APIC flags 
+                        flags: u32,
+                        
+                        /// OSPM associates the X2APIC Structure with a processor
+                        /// object declared in the namespace using the Device
+                        /// statement, when the _UID child object of the 
+                        /// processor device evaluates to a numeric value, by
+                        /// matching the numeric value with this field 
+                        acpi_processor_uid: u32,
+                    }
+
+                    // Ensure the data is the correct size
+                    if len as usize != size_of::<LocalX2apic>() {
+                        return Err(E);
+                    }
+
+                    let x2_apic = slice.consume::<LocalX2apic>().map_err(|_| E);
+
+                }
                 _ => {
                     // Unknown type, discard the data
                     slice.discard(len as usize).map_err(|_| E)?;
@@ -295,7 +346,7 @@ impl Madt {
             
         }
 
-        panic!()
+        panic!();
     }
 }
 
