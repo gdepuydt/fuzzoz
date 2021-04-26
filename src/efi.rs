@@ -5,16 +5,25 @@ use core::{
 
 static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
 
-pub unsafe fn register_system_table(system_table: *mut EfiSystemTable) -> EfiStatus {
-    EFI_SYSTEM_TABLE
+/// A strongly typed EFI system table which will disallow the copying
+/// of the raw pointer.
+#[repr(transparent)]
+pub struct EfiSystemTablePtr(*mut EfiSystemTable);
+
+impl EfiSystemTablePtr {
+    /// Register this system table into a global so it can be used for prints
+    /// which do not take a self, or a pointer as an argument and thus this
+    /// must be able to be found on a pointer
+    pub unsafe fn register(self) {
+        EFI_SYSTEM_TABLE
         .compare_exchange(
             core::ptr::null_mut(),
-            system_table,
+            self.0,
             Ordering::SeqCst,
             Ordering::SeqCst,
         )
         .unwrap();
-    EfiStatus(0)
+    }
 }
 
 pub fn output_string(string: &str) {
@@ -40,7 +49,13 @@ pub fn output_string(string: &str) {
         tmp[in_use] = chr;
         in_use += 1;
 
-        if in_use == (tmp.len() - 2) {
+        // If the temporary buffer could potentially be full on the next
+        // iteration we flush it. We do -2 here because we need room for
+        // the worst case which is a carriage return, newline, and null
+        // terminator in the next iteration. We also need to do >= because 
+        // we can potentially skip from 29 in use to 31 in use if the 30th 
+        // character is a newline. 
+        if in_use >= (tmp.len() - 2) {
             tmp[in_use] = 0;
 
             unsafe {
@@ -59,8 +74,26 @@ pub fn output_string(string: &str) {
     }
 }
 
-/// Get the base of the ACPI table RSD PTR (RSDP)
+/// Get the base of the ACPI table RSD PTR (RSDP). If EFI did not report an ACPI
+/// table, then we return `None`.
 pub fn get_acpi_table() -> Option<usize> {
+
+    /// ACPI 2.0 or newer tables should use EFI_ACPI_TABLE_GUID
+    const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid(
+        0x8868e871,
+        0xe4f1,
+        0x11d3,
+        [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81],
+    );
+    
+    /// ACPI 1.0 or newer tables should use EFI_ACPI_TABLE_GUID
+    const ACPI_TABLE_GUID: EfiGuid = EfiGuid(
+        0xeb9d2d30,
+        0x2d88,
+        0x11d3,
+        [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d],
+    );
+
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
@@ -71,22 +104,6 @@ pub fn get_acpi_table() -> Option<usize> {
     let tables = unsafe {
         core::slice::from_raw_parts((*system_table).tables, (*system_table).number_of_tables)
     };
-
-    /// ACPI 2.0 or newer tables should use EFI_ACPI_TABLE_GUID
-    const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid(
-        0x8868e871,
-        0xe4f1,
-        0x11d3,
-        [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81],
-    );
-
-    /// ACPI 1.0 or newer tables should use EFI_ACPI_TABLE_GUID
-    const ACPI_TABLE_GUID: EfiGuid = EfiGuid(
-        0xeb9d2d30,
-        0x2d88,
-        0x11d3,
-        [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d],
-    );
 
     // First look for the ACPI 2.0 table pointer, if we can't find it, then look
     // for the ACPI 1.0 table pointer
@@ -104,7 +121,7 @@ pub fn get_acpi_table() -> Option<usize> {
         })
 }
 
-pub fn get_memory_map(_image_handle: EfiHandle) {
+pub fn get_memory_map(image_handle: EfiHandle) {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
@@ -143,20 +160,20 @@ pub fn get_memory_map(_image_handle: EfiHandle) {
             if typ.avail_post_exit_boot_service() {
                 free_memory += entry.number_of_pages * 4096;
             }
-
+            /* 
             print!(
                 "{:016x} {:016x} {:?}\n",
                 entry.physical_start,
                 entry.number_of_pages * 4096,
                 typ
-            );
+            );*/
         }
 
         // Exit Boot serices
-        /*let ret = ((*(*system_table).boot_services).exit_boot_services)(
+        let ret = ((*(*system_table).boot_services).exit_boot_services)(
             image_handle,
             key
-        );*/
+        );
 
         assert!(ret.0 == 0, "Failed to exit boot services: {:?}", ret);
 
@@ -167,12 +184,12 @@ pub fn get_memory_map(_image_handle: EfiHandle) {
     print!("Total free bytes: {}\n", free_memory);
 }
 
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
+#[derive(Debug)]
+#[repr(transparent)]
 pub struct EfiHandle(usize);
 
 #[derive(Clone, Copy, Debug)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct EfiStatus(pub usize);
 
 #[repr(C)]

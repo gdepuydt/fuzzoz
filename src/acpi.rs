@@ -251,6 +251,7 @@ impl Table {
     }
 }
 
+/// The Multiple Apic Description Table
 struct Madt {}
 
 impl Madt {
@@ -343,10 +344,8 @@ impl Madt {
                     slice.discard(len as usize).map_err(|_| E)?;
                 }
             }
-            
         }
-
-        panic!();
+        Ok(Self{})
     }
 }
 
