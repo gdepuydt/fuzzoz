@@ -1,7 +1,17 @@
 use core::{
     sync::atomic::{AtomicPtr, Ordering},
     usize,
+    error::Error,
 };
+
+/// A 'REsult' type wrapping an EFI error
+type Result<T> = core::result::Result<T, Error>;
+
+/// Errors from EFI calls
+#[derive(debug)]
+pub enum Error {
+
+}
 
 static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
 
@@ -130,11 +140,9 @@ pub fn get_memory_map(image_handle: EfiHandle) {
 
     let mut memory_map = [0u8; 4 * 1024];
 
-    let mut free_memory = 0u64;
-
     unsafe {
+        // Set up the initial arguments to get the `get_memory_map` EFI call
         let mut size = core::mem::size_of_val(&memory_map);
-
         let mut key = 0;
         let mut mdesc_size = 0;
         let mut mdesc_version = 0;
@@ -147,7 +155,7 @@ pub fn get_memory_map(image_handle: EfiHandle) {
             &mut mdesc_size,
             &mut mdesc_version,
         );
-
+        
         assert!(ret.0 == 0, "Get memory map failed: {:?}", ret);
 
         for offset in (0..size).step_by(mdesc_size) {
@@ -157,9 +165,6 @@ pub fn get_memory_map(image_handle: EfiHandle) {
 
             let typ: EfiMemoryType = entry.typ.into();
 
-            if typ.avail_post_exit_boot_service() {
-                free_memory += entry.number_of_pages * 4096;
-            }
             /* 
             print!(
                 "{:016x} {:016x} {:?}\n",
@@ -181,7 +186,6 @@ pub fn get_memory_map(image_handle: EfiHandle) {
         EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
 
-    print!("Total free bytes: {}\n", free_memory);
 }
 
 #[derive(Debug)]
@@ -190,7 +194,170 @@ pub struct EfiHandle(usize);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct EfiStatus(pub usize);
+struct EfiStatusCode(usize);
+
+
+
+
+/// EFI status codes
+#[derive(Debug)]
+enum EfiStatus {
+    /// EFI Success
+    Success,
+    
+    /// An EFI warning (top bit clear)
+    Warning(EfiWarning),
+
+    /// An EFI error (top bit set)
+    Error(EfiWarning),
+}
+
+impl From<EfiStatusCode> for EfiStatus {
+    fn from(val: &EfiStatusCode) -> Self{
+        match val.0 {
+            _ => Self::Unknown(
+
+            ),
+        }
+    }
+}
+
+/// EFI warning codes
+#[derive(Debug)]
+enum EfiWarning {
+    /// The string contained one or more characters that the deice could not 
+    /// render and were skipped
+    UnknownGlyph,
+    
+    /// The handle was closed, but the file was not deleted
+    DeleteFailure,
+    
+    /// The handle was closed, but the data to the file was not flushed properly
+    WriteFailure,
+    
+    /// The resulting buffer was too small, and the data was truncated to the 
+    /// buffer size
+    BufferTooSmall,
+    
+    /// The data has not been updated within the timeframe set by the local 
+    /// policy for this type of data
+    StaleData,
+    
+    /// The resulting buffer contains UEFI-compliant file system 
+    FileSystem,
+    
+    /// The operation will be processed accross a system reset
+    ResetRequired,
+}
+
+/// EFI error codes
+#[derive(Debug)]
+enum EfiError {
+    /// The operation completed successfully
+    Success = 0,
+    
+    /// The image failed to load
+    LoadError,
+    
+    /// A parameter was incorrect
+    InvalidParameter,
+    
+    /// The operation is not supported
+    Unsupported,
+    
+    /// The bufer was not the proper size for the request
+    BadBufferSize,
+    
+    /// The buffer is not large enough to hold the requested data.
+    BufferTooSmall,
+    
+    /// There is no data pending upon return
+    NotReady,
+    
+    /// The physical device reported an error
+    DeviceError,
+    
+    /// The device cannot be written to
+    WriteProtected,
+    
+    /// A resource has run out
+    OutOfResources,
+    
+    /// An inconsistency was detected on the file system causing the operation 
+    /// to fail
+    VolumeCorrupted,
+    
+    /// There is no more space on the file system
+    VolumeFull,
+    
+    /// The device does not contain any medium to perform the operation
+    NoMedia,
+    
+    /// The medium in the device has changed since the last access
+    MediaChanged,
+    
+    /// The item was not found
+    NotFound,
+    
+    /// Access was denied
+    AccessDenied,
+    
+    /// The server was not found or did nor respond to the request
+    NoResponse,
+    
+    /// A mapping to a device does not exist
+    NoMapping,
+    
+    /// the timeout time expired
+    Timeout,
+
+    /// The protocol has not beem started
+    NotStarted,
+    
+    /// The protocol has already been started
+    AlreadyStarted,
+    
+    /// The operatuon was aborted
+    Aborted,
+    
+    /// An ICMP error occured during the network operation
+    IcmpError,
+    
+    /// A TFTP error occurred during the network operation
+    TftpError,
+    
+    /// A protocol error occurred during the network operation
+    ProtocolError,
+    
+    /// The function encountered an internal version that was incompatible with
+    /// a version requested by the caller
+    IncompatibleVersion,
+    
+    /// The function was not performed due to a security violation
+    SecurityViolation,
+    
+    /// A CRC error was detected
+    CrcError,
+    
+    /// Beginning or end of media reached
+    EndOfMedia = 28,
+    
+    /// The end of the file was reached
+    EndOfFile = 31,
+    
+    /// The language specified was invalid
+    InvalidLanguage,
+    
+    /// The security status of the data is unknown or compromised and the data
+    /// must be updated or replaced to restore a valid security status
+    CompromisedData,
+    
+    /// The is an address conflict address allocation
+    IpAddressConflict,
+    
+    /// An HTTP error occurred durin the network operation
+    HttpError,
+}
 
 #[repr(C)]
 struct EfiInputKey {
@@ -353,7 +520,7 @@ struct EfiSimpleTextOutputProtocol {
 /// Provides access to UEFI Boot Services, UEFI Runtime Services, consoles,
 /// firmware vendor information, and the system configuration tables.
 #[repr(C)]
-pub struct EfiSystemTable {
+struct EfiSystemTable {
     header: EfiTableHeader,
     firmware_vendor: *const u16,
     firmware_revision: u32,
