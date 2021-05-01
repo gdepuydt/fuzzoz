@@ -1,14 +1,13 @@
 use core::{
     sync::atomic::{AtomicPtr, Ordering},
     usize,
-    error::Error,
 };
 
 /// A 'REsult' type wrapping an EFI error
 type Result<T> = core::result::Result<T, Error>;
 
 /// Errors from EFI calls
-#[derive(debug)]
+#[derive(Debug)]
 pub enum Error {
 
 }
@@ -156,7 +155,7 @@ pub fn get_memory_map(image_handle: EfiHandle) {
             &mut mdesc_version,
         );
         
-        assert!(ret.0 == 0, "Get memory map failed: {:?}", ret);
+        assert!(ret != EfiStatus::Success, "Get memory map failed: {:?}", ret);
 
         for offset in (0..size).step_by(mdesc_size) {
             let entry = core::ptr::read_unaligned(
@@ -180,7 +179,7 @@ pub fn get_memory_map(image_handle: EfiHandle) {
             key
         );
 
-        assert!(ret.0 == 0, "Failed to exit boot services: {:?}", ret);
+        assert!(ret == EfiStatus::Success);
 
         // Kill the EFI system table
         EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
@@ -194,13 +193,13 @@ pub struct EfiHandle(usize);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-struct EfiStatusCode(usize);
+pub struct EfiStatusCode(usize);
 
 
 
 
 /// EFI status codes
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum EfiStatus {
     /// EFI Success
     Success,
@@ -209,21 +208,31 @@ enum EfiStatus {
     Warning(EfiWarning),
 
     /// An EFI error (top bit set)
-    Error(EfiWarning),
+    Error(EfiError),
 }
 
 impl From<EfiStatusCode> for EfiStatus {
-    fn from(val: &EfiStatusCode) -> Self{
+    fn from(val: EfiStatusCode) -> Self{
         match val.0 {
-            _ => Self::Unknown(
+            0 => {
+                Self::Success
+            }
+            0x0000000000000000..=0x7fffffffffffffff => {
+                Self::Warning(EfiWarning::Unknown(val.0))
+            }
+            0x8000000000000000..=0xcfffffffffffffffff => {
+                Self::Error(EfiError::Unknown(val.0))
+            }
 
-            ),
+            _ => {
+                
+            }
         }
     }
 }
 
 /// EFI warning codes
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum EfiWarning {
     /// The string contained one or more characters that the deice could not 
     /// render and were skipped
@@ -248,10 +257,14 @@ enum EfiWarning {
     
     /// The operation will be processed accross a system reset
     ResetRequired,
+
+    /// An Unknown warning
+    Unknown(usize),
 }
 
 /// EFI error codes
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+#[repr(usize)]
 enum EfiError {
     /// The operation completed successfully
     Success = 0,
@@ -357,6 +370,9 @@ enum EfiError {
     
     /// An HTTP error occurred durin the network operation
     HttpError,
+
+    /// An Unknown error
+    Unknown(usize),
 }
 
 #[repr(C)]
