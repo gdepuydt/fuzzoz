@@ -40,10 +40,10 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: EfiSystemTablePtr)
     unsafe { system_table.register() };
 
     unsafe {
-        acpi::init().expect("oopsie");
+        acpi::init().expect("Failed to initialize ACPI");
     };
 
-    efi::get_memory_map(image_handle);
+    efi::get_memory_map(image_handle).expect("Failed to get EFI Memory Map");
 
     panic!("Moose!");
 }

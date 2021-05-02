@@ -264,10 +264,10 @@ impl Madt {
         let mut slice = mm::PhysSlice::new(addr, size);
 
         // Read the local APIC physical address
-        let local_apic_addr = slice.consume::<u32>().map_err(|_| E)?;
+        let _local_apic_addr = slice.consume::<u32>().map_err(|_| E)?;
 
         // Get the APIC flags
-        let flags = slice.consume::<u32>().map_err(|_| E)?;
+        let _flags = slice.consume::<u32>().map_err(|_| E)?;
 
         
         // Handle interrup controller structures
@@ -307,7 +307,7 @@ impl Madt {
                         return Err(E);
                     }
 
-                    let apic = slice.consume::<LocalApic>().map_err(|_| E);
+                    let _apic = slice.consume::<LocalApic>().map_err(|_| E);
                 }
                 
                 9 => {
@@ -336,7 +336,7 @@ impl Madt {
                         return Err(E);
                     }
 
-                    let x2_apic = slice.consume::<LocalX2apic>().map_err(|_| E);
+                    let _x2_apic = slice.consume::<LocalX2apic>().map_err(|_| E);
 
                 }
                 _ => {

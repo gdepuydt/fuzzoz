@@ -9,7 +9,14 @@ type Result<T> = core::result::Result<T, Error>;
 /// Errors from EFI calls
 #[derive(Debug)]
 pub enum Error {
+    /// The EFI System Table has not been registered.
+    NotRegistered,
 
+    /// We failed to get the memory map from EFI.
+    MemoryMap(EfiStatus),
+
+    /// We failed exiting EFI boot services.
+    ExitBootServices(EfiStatus),
 }
 
 static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
@@ -130,11 +137,11 @@ pub fn get_acpi_table() -> Option<usize> {
         })
 }
 
-pub fn get_memory_map(image_handle: EfiHandle) {
+pub fn get_memory_map(image_handle: EfiHandle) -> Result<()> {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
-        return;
+        return Err(Error::NotRegistered);
     }
 
     let mut memory_map = [0u8; 4 * 1024];
@@ -147,22 +154,24 @@ pub fn get_memory_map(image_handle: EfiHandle) {
         let mut mdesc_version = 0;
 
         // Get the memory map
-        let ret = ((*(*system_table).boot_services).get_memory_map)(
+        let ret= ((*(*system_table).boot_services).get_memory_map)(
             &mut size,
             memory_map.as_mut_ptr(),
             &mut key,
             &mut mdesc_size,
             &mut mdesc_version,
-        );
+        ).into();
         
-        assert!(ret != EfiStatus::Success, "Get memory map failed: {:?}", ret);
+        if ret != EfiStatus::Success {
+            return Err(Error::MemoryMap(ret));
+        }
 
         for offset in (0..size).step_by(mdesc_size) {
             let entry = core::ptr::read_unaligned(
                 memory_map[offset..].as_ptr() as *const EfiMemoryDescriptor
             );
 
-            let typ: EfiMemoryType = entry.typ.into();
+            let _typ: EfiMemoryType = entry.typ.into();
 
             /* 
             print!(
@@ -177,14 +186,17 @@ pub fn get_memory_map(image_handle: EfiHandle) {
         let ret = ((*(*system_table).boot_services).exit_boot_services)(
             image_handle,
             key
-        );
+        ).into();
 
-        assert!(ret == EfiStatus::Success);
+        if ret == EfiStatus::Success {
+            return Err(Error::ExitBootServices(ret));
+        }
 
         // Kill the EFI system table
-        EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
+        // EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
-
+    
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -200,7 +212,7 @@ pub struct EfiStatusCode(usize);
 
 /// EFI status codes
 #[derive(Debug, PartialEq, Eq)]
-enum EfiStatus {
+pub enum EfiStatus {
     /// EFI Success
     Success,
     
@@ -213,19 +225,65 @@ enum EfiStatus {
 
 impl From<EfiStatusCode> for EfiStatus {
     fn from(val: EfiStatusCode) -> Self{
-        match val.0 {
+        
+        // Sign extend the error code to make this not tied with a specific
+        // bitness 
+        let val = val.0 as i32 as i64 as u64;
+
+        
+        match val {
             0 => {
                 Self::Success
             }
-            0x0000000000000000..=0x7fffffffffffffff => {
-                Self::Warning(EfiWarning::Unknown(val.0))
+            0x0000000000000001..=0x7fffffffffffffff => {
+                EfiStatus::Warning(match val & !(1<< 63) {
+                    1 => EfiWarning::UnknownGlyph,
+                    2 => EfiWarning::DeleteFailure,
+                    3 => EfiWarning::WriteFailure,
+                    4 => EfiWarning::BufferTooSmall,
+                    5 => EfiWarning::StaleData,
+                    6 => EfiWarning::FileSystem,
+                    7 => EfiWarning::ResetRequired,
+                    _ => EfiWarning::Unknown(val),
+                })
             }
-            0x8000000000000000..=0xcfffffffffffffffff => {
-                Self::Error(EfiError::Unknown(val.0))
-            }
-
-            _ => {
-                
+            0x8000000000000000..=0xffffffffffffffff => {
+                EfiStatus::Error(match val & !(1<< 63) {
+                    1 => EfiError::LoadError,
+                    2 => EfiError::InvalidParameter,
+                    3 => EfiError::Unsupported,
+                    4 => EfiError::BadBufferSize,
+                    5 => EfiError::BufferTooSmall,
+                    6 => EfiError::NotReady,
+                    7 => EfiError::DeviceError,
+                    8 => EfiError::WriteProtected,
+                    9 => EfiError::OutOfResources,
+                    10 => EfiError::VolumeCorrupted,
+                    11 => EfiError::VolumeFull,
+                    12 => EfiError::NoMedia,
+                    13 => EfiError::MediaChanged,
+                    14 => EfiError::NotFound,
+                    15 => EfiError::AccessDenied,
+                    16 => EfiError::NoResponse,
+                    17 => EfiError::NoMapping,
+                    18 => EfiError::Timeout,
+                    19 => EfiError::NotStarted,
+                    20 => EfiError::AlreadyStarted,
+                    21 => EfiError::Aborted,
+                    22 => EfiError::IcmpError,
+                    23 => EfiError::TftpError,
+                    24 => EfiError::ProtocolError,
+                    25 => EfiError::IncompatibleVersion,
+                    26 => EfiError::SecurityViolation,
+                    27 => EfiError::CrcError,
+                    28 => EfiError::EndOfMedia,
+                    31 => EfiError::EndOfFile,
+                    32 => EfiError::InvalidLanguage,
+                    33 => EfiError::CompromisedData,
+                    34 => EfiError::IpAddressConflict,
+                    35 => EfiError::HttpError,
+                    _ => EfiError::Unknown(val),
+                })
             }
         }
     }
@@ -233,7 +291,7 @@ impl From<EfiStatusCode> for EfiStatus {
 
 /// EFI warning codes
 #[derive(Debug, PartialEq, Eq)]
-enum EfiWarning {
+pub enum EfiWarning {
     /// The string contained one or more characters that the deice could not 
     /// render and were skipped
     UnknownGlyph,
@@ -259,15 +317,13 @@ enum EfiWarning {
     ResetRequired,
 
     /// An Unknown warning
-    Unknown(usize),
+    Unknown(u64),
 }
 
 /// EFI error codes
 #[derive(Debug, PartialEq, Eq)]
 #[repr(usize)]
-enum EfiError {
-    /// The operation completed successfully
-    Success = 0,
+pub enum EfiError {
     
     /// The image failed to load
     LoadError,
@@ -372,7 +428,7 @@ enum EfiError {
     HttpError,
 
     /// An Unknown error
-    Unknown(usize),
+    Unknown(u64),
 }
 
 #[repr(C)]
@@ -474,7 +530,7 @@ struct EfiBootServices {
         map_key: &mut usize,
         descriptor_size: &mut usize,
         descriptor_version: &mut u32,
-    ) -> EfiStatus,
+    ) -> EfiStatusCode,
     _allocale_pool: usize,
     _free_pool: usize,
     _create_event: usize,
@@ -496,7 +552,7 @@ struct EfiBootServices {
     _start_image: usize,
     _exit: usize,
     _unload_image: usize,
-    exit_boot_services: unsafe fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus,
+    exit_boot_services: unsafe fn(image_handle: EfiHandle, map_key: usize) -> EfiStatusCode,
 }
 
 #[repr(C)]
@@ -504,9 +560,9 @@ struct EfiSimpleTextInputProtocol {
     reset: unsafe fn(
         this: *const EfiSimpleTextInputProtocol,
         extended_verification: bool,
-    ) -> EfiStatus,
+    ) -> EfiStatusCode,
     read_keystroke:
-        unsafe fn(this: *const EfiSimpleTextInputProtocol, key: *mut EfiInputKey) -> EfiStatus,
+        unsafe fn(this: *const EfiSimpleTextInputProtocol, key: *mut EfiInputKey) -> EfiStatusCode,
     _wait_for_key: usize,
 }
 
@@ -515,15 +571,15 @@ struct EfiSimpleTextOutputProtocol {
     reset: unsafe fn(
         this: *const EfiSimpleTextOutputProtocol,
         extended_verification: bool,
-    ) -> EfiStatus,
+    ) -> EfiStatusCode,
 
     // Writes a string to the output device
     output_string:
-        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatus,
+        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatusCode,
     // Verifies that all characters in a string can beoutput to the target
     // device.
     test_string:
-        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatus,
+        unsafe fn(this: *const EfiSimpleTextOutputProtocol, string: *const u16) -> EfiStatusCode,
     _query_mode: usize,
     _set_mode: usize,
     _set_attribute: usize,
