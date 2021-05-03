@@ -35,15 +35,24 @@ fn panic(info: &PanicInfo) -> ! {
 
 #[no_mangle]
 extern "C" fn efi_main(image_handle: EfiHandle, system_table: EfiSystemTablePtr) -> EfiStatusCode {
-    // First,  register the EFI system table in a global so we can use it
-    // in other places such as a `print!` macro
-    unsafe { system_table.register() };
-
+    
     unsafe {
+        
+        // First,  register the EFI system table in a global so we can use it
+        // in other places such as a `print!` macro.
+        system_table.register();
+
+        // Initalize ACPI.
         acpi::init().expect("Failed to initialize ACPI");
-    };
+        
+        // Get the memory map and exit boot services
+        let mm = efi::get_memory_map(image_handle)
+            .expect("Failed to get EFI Memory Map");
 
-    efi::get_memory_map(image_handle).expect("Failed to get EFI Memory Map");
+        print!("{:#x?}\n", mm);
+    }
 
-    panic!("Moose!");
+    loop {
+
+    }
 }

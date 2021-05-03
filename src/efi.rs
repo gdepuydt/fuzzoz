@@ -3,10 +3,14 @@ use core::{
     usize,
 };
 
-/// A 'REsult' type wrapping an EFI error
+
+/// The maximum number of memory regions that we can save from EFI
+const NUM_MEMORY_REGIONS: usize = 64;
+
+/// A 'Result' type wrapping an EFI error.
 type Result<T> = core::result::Result<T, Error>;
 
-/// Errors from EFI calls
+/// Errors from EFI calls.
 #[derive(Debug)]
 pub enum Error {
     /// The EFI System Table has not been registered.
@@ -17,6 +21,12 @@ pub enum Error {
 
     /// We failed exiting EFI boot services.
     ExitBootServices(EfiStatus),
+
+    /// An integer overflow occured when processing EFI memory map data.
+    MemoryMapIntegerOverflow,
+
+    /// The EFI memory map had more entries than our fixed size array allows.
+    MemoryMapOutOfEntries,
 }
 
 static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
@@ -29,7 +39,7 @@ pub struct EfiSystemTablePtr(*mut EfiSystemTable);
 impl EfiSystemTablePtr {
     /// Register this system table into a global so it can be used for prints
     /// which do not take a self, or a pointer as an argument and thus this
-    /// must be able to be found on a pointer
+    /// must be able to be found on a pointer.
     pub unsafe fn register(self) {
         EFI_SYSTEM_TABLE
         .compare_exchange(
@@ -137,7 +147,18 @@ pub fn get_acpi_table() -> Option<usize> {
         })
 }
 
-pub fn get_memory_map(image_handle: EfiHandle) -> Result<()> {
+/// Holds a region of usable physical memory
+#[derive(Debug, Clone, Copy)]
+pub struct UsableMemory {
+    
+    /// Start address (inclusive) of the emory region
+    pub start: u64,
+    
+    /// End address (inclusive) of the memory region
+    pub end: u64,
+}
+
+pub fn get_memory_map(image_handle: EfiHandle) -> Result<[Option<UsableMemory>; NUM_MEMORY_REGIONS]> {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
@@ -146,14 +167,19 @@ pub fn get_memory_map(image_handle: EfiHandle) -> Result<()> {
 
     let mut memory_map = [0u8; 4 * 1024];
 
+    // The Rust memory map
+    let mut usable_memory = [None; NUM_MEMORY_REGIONS];
+    let mut used = 0usize;
+
+
     unsafe {
-        // Set up the initial arguments to get the `get_memory_map` EFI call
+        // Set up the initial arguments to get the `get_memory_map` EFI call.
         let mut size = core::mem::size_of_val(&memory_map);
         let mut key = 0;
         let mut mdesc_size = 0;
         let mut mdesc_version = 0;
 
-        // Get the memory map
+        // Get the memory map.
         let ret= ((*(*system_table).boot_services).get_memory_map)(
             &mut size,
             memory_map.as_mut_ptr(),
@@ -162,24 +188,46 @@ pub fn get_memory_map(image_handle: EfiHandle) -> Result<()> {
             &mut mdesc_version,
         ).into();
         
+        // Check that the memory map is obtained.
         if ret != EfiStatus::Success {
             return Err(Error::MemoryMap(ret));
         }
 
+        // Go through each memory map entry.
         for offset in (0..size).step_by(mdesc_size) {
             let entry = core::ptr::read_unaligned(
                 memory_map[offset..].as_ptr() as *const EfiMemoryDescriptor
             );
 
-            let _typ: EfiMemoryType = entry.typ.into();
+            let typ: EfiMemoryType = entry.typ.into();
 
-            /* 
-            print!(
-                "{:016x} {:016x} {:?}\n",
-                entry.physical_start,
-                entry.number_of_pages * 4096,
-                typ
-            );*/
+            // Check if this memory is usable after boot services are exited
+            if typ.avail_post_exit_boot_service() {
+                if entry.number_of_pages > 0 {
+                    // Get the number of bytes for this memory region
+                    let bytes = entry.number_of_pages.checked_mul(4096)
+                        .ok_or(Error::MemoryMapIntegerOverflow)?;
+                    
+                    // Compute the end physical address of this region
+                    let end = entry.physical_start.checked_add(bytes - 1)
+                        .ok_or(Error::MemoryMapIntegerOverflow)?;
+                    
+                    // Get the entry for the next free usable memory range
+                    let um = usable_memory.get_mut(used)
+                        .ok_or(Error::MemoryMapOutOfEntries)?;
+                    
+                    // Set the usable memory information
+                    *um = Some(UsableMemory {
+                        start: entry.physical_start,
+                        end: end,
+                    });
+
+                    // Increment the number of used entries
+                    used += 1;
+                }
+                
+            }
+           
         }
 
         // Exit Boot serices
@@ -196,7 +244,7 @@ pub fn get_memory_map(image_handle: EfiHandle) -> Result<()> {
         // EFI_SYSTEM_TABLE.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
     
-    Ok(())
+    Ok(usable_memory)
 }
 
 #[derive(Debug)]
