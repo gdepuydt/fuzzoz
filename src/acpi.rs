@@ -67,7 +67,6 @@ pub enum Error {
 
     // An integer overflow occurred
     IntegerOverflow,
-
 }
 
 /// Compute an ACPI checksum on physical memory

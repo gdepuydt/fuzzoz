@@ -10,6 +10,7 @@ mod acpi;
 mod core_requirements;
 mod efi;
 mod mm;
+mod rangeset;
 use core::panic::PanicInfo;
 use efi::{EfiHandle, EfiSystemTablePtr, EfiStatusCode};
 
