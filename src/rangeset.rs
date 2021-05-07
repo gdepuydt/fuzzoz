@@ -186,5 +186,116 @@ impl RangeSet {
     }
 
     
+    /// Allocate `size` bytes of memory with `align` requirements for alignment
+    /// Preferring to allocate from the `region`. If an allocation cannot be 
+    /// satisfied from `regions` the allocation will come from whatever is next
+    /// best. If `regions` is `None`, the allocation will be satisfied 
+    /// from anywhere. This will be the core of our physical memory manager.
+    pub fn allocate_prefer(&mut self, size: u64, align: u64,
+                                regions: Option<&RangeSet>) -> Option<usize> {
+        // Don't allow allocations of zero size
+        if size == 0 {
+            return None;
+        }
 
+        // Validate alignment is non-zero and a power of 2
+        if align.count_ones() != 1 {
+            return None;
+        }
+
+        // Generate a mask for the specified alignment.
+        let alignmask = align - 1;
+
+        // Go through each memory range in the `RangeSet`.
+        let mut allocation = None;
+        'allocation_search: for ent in self.entries() {
+            // Determine the number of bytes required for front padding to
+            // satisfy alignment requirements
+            let align_fix = (align - (ent.start & alignmask)) & alignmask;
+
+            // Compute base and end of allocation as an inclusive range 
+            // [base, end].
+            let base = ent.start;
+            let end  = base.checked_add(size - 1)?.checked_add(align_fix)?;
+
+            /*// Validate the the allocation is addressable in the current 
+            // processor state.
+            if base > core::usize::MAX as u64 || 
+                end > core::usize::MAX as u64 {
+                    continue;
+            }*/
+
+            // Check that this entity has enough room to satisfy allocation
+            if end > ent.end {
+                continue;
+            }
+            
+            // If there was a specific redion the caller wanted to use.
+            if let Some(region) = regions {
+                // Check if there is overlap with this region
+                for &region in region.entries() {
+                    if let Some(overlap) = overlaps(*ent, region) {
+                        // Compute the rounded-up alignment from the
+                        // overlapping region.
+                        let align_overlap = (overlap.start.checked_add(alignmask)?) & 
+                            !alignmask;
+                        if align_overlap >= overlap.start && 
+                            align_overlap <= overlap.end &&
+                            (overlap.end - align_overlap) >= (size - 1) {
+                            
+                            // Alignment did not cause and underflow AND 
+                            // alignment did not cause exceeding the end AND
+                            // amount of aligned overap can satisfy 
+                            // the allocation.
+
+                            // Compute the inclusive end of this proposed
+                            // allocation.
+                            let overlap_alc_end = align_overlap + (size - 1);
+                            
+                            /*// Make sure the allocation fits in the current
+                            // addressable address space.
+                            if align_overlap > core::usize::MAX as u64 ||
+                                overlap_alc_end > core::usize::MAX as u64 {
+                                    continue 'allocation_search;
+                            }*/
+
+                            // We know the allocation can be satisfied starting
+                            // at `align_overlap`.
+                            // Break out immediately as we prioritize NUMA over
+                            // size.
+                            allocation = Some((align_overlap, 
+                                                overlap_alc_end,
+                                                align_overlap as usize));
+                            break 'allocation_search
+                        }
+                    }
+                }
+            }
+
+            // Compute the "best" allocation size to date.
+            let prev_size = allocation.map(|(base, end, _)| end - base);
+
+            if allocation.is_none() || prev_size.unwrap() > end - base {
+                // Update the allocation to the new best size.
+                allocation = Some((base, end, (base + align_fix) as usize));
+            }
+        }
+
+        allocation.map(|(base, end, ptr)| {
+            // Remove this range from the available set.
+            self.remove(Range {start: base, end: end});
+
+            // return out the pointer.
+            ptr
+        }) 
+    }
 }
+
+fn overlaps(mut a: Range, mut b: Range) -> Option<Range> {
+    todo!();
+}
+
+fn contains(mut a: Range, mut b: Range) -> bool {
+    todo!();
+}
+
