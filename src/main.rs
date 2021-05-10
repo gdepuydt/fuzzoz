@@ -50,7 +50,8 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: EfiSystemTablePtr)
         let mm = efi::get_memory_map(image_handle)
             .expect("Failed to get EFI Memory Map");
 
-        print!("{:#x?}\n", mm);
+        print!("{:#x?}\n", mm.entries());
+        print!("Physical free: {:?}\n", mm.sum().unwrap());
     }
 
     loop {
