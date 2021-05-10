@@ -292,10 +292,38 @@ impl RangeSet {
 }
 
 fn overlaps(mut a: Range, mut b: Range) -> Option<Range> {
-    todo!();
+    // Make sure range 'a' is always lowest to biggest.
+    if a.start > a.end {
+        core::mem::swap(&mut a.end, &mut a.start);
+    }
+
+    // Make sure range 'b' is always lowest to biggest.
+    if b.start > b.end {
+        core::mem::swap(&mut b.end, &mut b.start);
+    }
+
+    // Check if there is overlap.
+    if a.start <= b.end && b.start <= a.end {
+        Some (Range {
+            start: core::cmp::max(a.start, b.start),
+            end: core::cmp::min(a.end, b.end),
+        })
+    } else {
+        None
+    }
 }
 
 fn contains(mut a: Range, mut b: Range) -> bool {
-    todo!();
+    // Make sure range 'a' is always lowest to biggest.
+    if a.start > a.end {
+        core::mem::swap(&mut a.end, &mut a.start);
+    }
+
+    // Make sure range 'b' is always lowest to biggest.
+    if b.start > b.end {
+        core::mem::swap(&mut b.end, &mut b.start);
+    }
+
+    a.start >= b.start && a.end <= b.end
 }
 
