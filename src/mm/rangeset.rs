@@ -1,14 +1,23 @@
 //! Module which provides `Rangeset` which contains non-overlapping sets of `u64` inclusive ranges.
 //! The `Rangeset` can be used to insert or remove ranges of `u64`s and thus is 
-//! very useful for physical memory management 
+//! very useful for physical memory management. 
 
 
 /// A `Result` type which wraps a `RangeSet` error.
 type Result<T> = core::result::Result<T, Error>;
-/// Errors associated with `RangeSet` operations
+/// Errors associated with `RangeSet` operations.
 #[derive(Debug)]
 pub enum Error {
+    
+    /// An 'out of bounds' index was specified.
     InvalidIndex,
+    
+    /// A range was specified with an invalid shape (Start > End).
+    InvalidRange,
+
+    /// An operation was performed on the `RangeSet` but there was no more space 
+    /// in the fixed allocation of ranges
+    OutOfEntries,
 }
 
 
@@ -18,10 +27,10 @@ use core::cmp;
 #[derive(Clone, Copy, Debug)]
 pub struct Range {
     
-    /// Start of the range (inclusive)
+    /// Start of the range (inclusive).
     pub start: u64,
     
-    /// End of the range (inclusive)
+    /// End of the range (inclusive).
     pub end: u64,
 }
 /// A set of non-overlapping inclusive `u64` ranges. 
@@ -60,9 +69,7 @@ impl RangeSet {
         assert!(idx < self.in_use as usize, "Index out of bounds.");
 
         // Copy the deleted range to the end of the list.
-        for ii in idx..self.in_use as usize - 1 {
-            self.ranges.swap(ii, ii+1);
-        }
+        self.ranges.swap(idx, self.in_use - 1);
 
         // Decrement the number of valid ranges
         self.in_use -= 1;
@@ -75,9 +82,13 @@ impl RangeSet {
     /// If the range overlaps with an existing range, then the range will
     /// be merged. If the range has no overlap with an existing range then
     /// it will simply be added to the set. 
-    pub fn insert(&mut self, mut range: Range) {
-        assert!(range.start <= range.end, "Invalid range shape.");
-
+    pub fn insert(&mut self, mut range: Range) -> Result<()> {
+        
+        // Check the range
+        if range.end < range.start {
+            return Err(Error::InvalidRange);
+        }
+        
         // Outside loop forever until we run out of merges with existing
         // ranges.
         'try_merges: loop {
@@ -100,35 +111,46 @@ impl RangeSet {
                 ).is_none() {
                     continue;
                 }
-                // There was an overlap with an existing range. Make this range
+                // There was an overlap with an existing range. Make this range.
                 // a combination of the existing ranges.
                 range.start = cmp::min(range.start, ent.start);
                 range.end = cmp::max(range.end, ent.end);
 
-                // Delete the old range, as the new one is now all inclusive
-                self.delete(ii);
+                // Delete the old range, as the new one is now all inclusive.
+                self.delete(ii)?;
 
-                // Start over looking for merges
+                // Start over looking for merges.
                 continue 'try_merges;
             }
 
             break;
         }
         
-        assert!((self.in_use as usize) < self.ranges.len(),
-            "Too many entries in RangeSet on insert.");
 
-        // Add the new range to the end
-        self.ranges[self.in_use as usize] = range;
-        self.in_use += 1;
+        
+        // Add the new range to the end.
+        if let Some(ent) = self.ranges.get_mut(self.in_use) {
+            *ent = range;
+            self.in_use += 1;
+            Ok(())
+        } else {
+            // If we deleted anything above it's impossible for this error to
+            // occur as we know there is at least space for one entry. Thus we don't
+            // have to worry about restored ranges from above.
+            Err(Error::OutOfEntries)
+        }
     }
 
     /// Remove `range` from the RangeSet
     /// Any range in the RangeSet which overlaps with `range` will be trimmed
     /// such that there is no more overlap. If the results in a range in
     /// the set become empty, the range will be removed entirely from the set.
-    pub fn remove(&mut self, range: Range) {
-        assert!(range.start <= range.end, "Invalid range shape");
+    pub fn remove(&mut self, range: Range) -> Result<()> {
+        
+        // Check the range
+        if range.end < range.start {
+            return Err(Error::InvalidRange);
+        }
 
         'try_subtraction: loop {
             for ii in 0..self.in_use as usize {
@@ -143,7 +165,7 @@ impl RangeSet {
                 // If this entry is entirely contained by the range to remove
                 // we can just delete it.
                 if contains(ent, range) {
-                    self.delete(ii);
+                    self.delete(ii)?;
                     continue 'try_subtraction;
                 }
 
@@ -165,28 +187,34 @@ impl RangeSet {
                     // If the range to remove fits inside of the range then we
                     // need to split it into two ranges.
                     self.ranges[ii].start = range.end.saturating_add(1);
-                    assert!((self.in_use as usize) < self.ranges.len(),
-                        "Too many entries in RangeSet on split.");
                     
-                        self.ranges[self.in_use as usize] = Range {
+                    // Insert a new range for the tail.
+                    if let Some(ent) = self.ranges.get_mut(self.in_use) {
+                        *ent = Range {
                             start: ent.start,
                             end: range.start.saturating_sub(1),
                         };
-                        self.in_use += 1;
-                        continue 'try_subtraction;
+                        self.in_use += 1; 
+                    } else {
+                        return Err(Error::OutOfEntries);
+                    }
+                        
+                    continue 'try_subtraction;
                 }
 
             }
-            
+            // No more subtractions could be found.
             break;
         }
+        Ok(())
     } 
 
     /// Subtracts a `RangeSet` from `self`
-    pub fn subtract(&mut self, rs: &RangeSet) {
+    pub fn subtract(&mut self, rs: &RangeSet) -> Result<()> {
         for &ent in rs.entries() {
-            self.remove(ent)
+            self.remove(ent)?;
         }
+        Ok(())
     }
 
     /// Compute the size of the range covered by this rangeset
