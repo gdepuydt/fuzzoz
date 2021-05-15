@@ -2,6 +2,16 @@
 //! The `Rangeset` can be used to insert or remove ranges of `u64`s and thus is 
 //! very useful for physical memory management 
 
+
+/// A `Result` type which wraps a `RangeSet` error.
+type Result<T> = core::result::Result<T, Error>;
+/// Errors associated with `RangeSet` operations
+#[derive(Debug)]
+pub enum Error {
+    InvalidIndex,
+}
+
+
 use core::cmp;
 /// An inclusive range. We do not use `RangeInclusive` as it does not implement
 /// a `Copy`.
@@ -41,7 +51,12 @@ impl RangeSet {
     }
 
     /// Delete the `Range` contained in the RangeSet at `idx`.
-    pub fn delete(&mut self, idx: usize) {
+    pub fn delete(&mut self, idx: usize) -> Result<()> {
+        // Make sure we're deleting a valid index.
+        if idx >= self.in_use {
+            return Err(Error::InvalidIndex);
+        }
+        
         assert!(idx < self.in_use as usize, "Index out of bounds.");
 
         // Copy the deleted range to the end of the list.
@@ -51,6 +66,8 @@ impl RangeSet {
 
         // Decrement the number of valid ranges
         self.in_use -= 1;
+
+        Ok(())
         
     }
 
