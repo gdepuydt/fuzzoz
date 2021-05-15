@@ -3,7 +3,7 @@ use core::{
     usize,
 };
 
-use crate::rangeset::{Range,RangeSet};
+use crate::mm::rangeset::{Range,RangeSet};
 
 
 /// The maximum number of memory regions that we can save from EFI

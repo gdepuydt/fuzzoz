@@ -10,7 +10,6 @@ mod acpi;
 mod core_requirements;
 mod efi;
 mod mm;
-mod rangeset;
 use core::panic::PanicInfo;
 use efi::{EfiHandle, EfiSystemTablePtr, EfiStatusCode};
 
@@ -54,7 +53,5 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: EfiSystemTablePtr)
         print!("Physical free: {:?}\n", mm.sum().unwrap());
     }
 
-    loop {
-
-    }
+    loop {}
 }
