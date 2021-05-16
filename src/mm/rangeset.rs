@@ -16,8 +16,20 @@ pub enum Error {
     InvalidRange,
 
     /// An operation was performed on the `RangeSet` but there was no more space 
-    /// in the fixed allocation of ranges
+    /// in the fixed allocation of ranges.
     OutOfEntries,
+
+    /// A request for a free range failed due not having a free range with 
+    /// the requested size and alignment.
+    OutOfMemory,
+
+    /// Zero sized allocations are not supported.
+    ZeroSizeAllocation,
+
+    /// The alignment specified was not a power of 2 or was zero.
+    InvalidAlignment,
+
+
 }
 
 
@@ -225,7 +237,7 @@ impl RangeSet {
     }
 
     /// Allocate `size` bytes of memory with `align` requirement for alignment
-    pub fn allocate(&mut  self, size: u64, align: u64) -> Option<usize> {
+    pub fn allocate(&mut  self, size: u64, align: u64) -> Result<usize> {
         // Allocate anywhere from the `RangeSet`
         self.allocate_prefer(size, align, None)
     }
@@ -237,15 +249,15 @@ impl RangeSet {
     /// best. If `regions` is `None`, the allocation will be satisfied 
     /// from anywhere. This will be the core of our physical memory manager.
     pub fn allocate_prefer(&mut self, size: u64, align: u64,
-                                regions: Option<&RangeSet>) -> Option<usize> {
+                                regions: Option<&RangeSet>) -> Result<usize> {
         // Don't allow allocations of zero size
         if size == 0 {
-            return None;
+            return Err(Error::ZeroSizeAllocation);
         }
 
         // Validate alignment is non-zero and a power of 2
         if align.count_ones() != 1 {
-            return None;
+            return Err(Error::InvalidAlignment);
         }
 
         // Generate a mask for the specified alignment.
@@ -261,7 +273,15 @@ impl RangeSet {
             // Compute base and end of allocation as an inclusive range 
             // [base, end].
             let base = ent.start;
-            let end  = base.checked_add(size - 1)?.checked_add(align_fix)?;
+            let end = if let Some(end)  = base.checked_add(size - 1)
+                .and_then(|x| x.checked_add(align_fix)) {
+                    end
+                } else {
+                    // This range cannor satisfy this allocation as there was an
+                    // overflow on the range.
+                    continue;
+                };
+
 
             /*// Validate the the allocation is addressable in the current 
             // processor state.
@@ -282,7 +302,7 @@ impl RangeSet {
                     if let Some(overlap) = overlaps(*ent, region) {
                         // Compute the rounded-up alignment from the
                         // overlapping region.
-                        let align_overlap = (overlap.start.checked_add(alignmask)?) & 
+                        let align_overlap = (overlap.start.wrapping_add(alignmask)) & 
                             !alignmask;
                         if align_overlap >= overlap.start && 
                             align_overlap <= overlap.end &&
@@ -320,19 +340,22 @@ impl RangeSet {
             // Compute the "best" allocation size to date.
             let prev_size = allocation.map(|(base, end, _)| end - base);
 
+            // If no previous allocation or the new allocation uses less memory
+            // than the previous allocation
             if allocation.is_none() || prev_size.unwrap() > end - base {
                 // Update the allocation to the new best size.
                 allocation = Some((base, end, (base + align_fix) as usize));
             }
         }
 
-        allocation.map(|(base, end, ptr)| {
+        if let Some((base, end,ptr)) = allocation {
             // Remove this range from the available set.
-            self.remove(Range {start: base, end: end});
-
-            // return out the pointer.
-            ptr
-        }) 
+            self.remove(Range {start: base, end})?;
+            Ok(ptr)
+        } else {
+            // Could not satisfy allocation.
+            Err(Error::OutOfMemory)
+        }
     }
 }
 

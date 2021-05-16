@@ -11,7 +11,7 @@ unsafe fn memcpy_int(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     asm!("rep movsb",
             inout("rcx") n => _,
             inout("rdi") dest => _,
@@ -21,7 +21,7 @@ pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, mut n: usize) -> *mut u8 {
+unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, mut n: usize) -> *mut u8 {
     // Determine if the dest comes after the src and if there's overlap
     if (dest as usize) > (src as usize) && (src as usize).wrapping_add(n) > (dest as usize) {
         // There is at least one byte of overlap and the src is prior
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, mut n: usize) ->
 
 // Fill memory with a constant
 #[no_mangle]
-pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
+unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     asm!("rep stosb",
         inout("rcx") n => _,
         inout("rdi") s => _,
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+unsafe extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
     let mut ii = 0;
 
     while ii < n {
