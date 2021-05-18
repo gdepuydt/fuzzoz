@@ -3,7 +3,7 @@ use core::{
     usize,
 };
 
-use crate::mm::rangeset::{Range,RangeSet};
+use crate::mm::rangeset::{self, Range,RangeSet};
 
 
 /// The maximum number of memory regions that we can save from EFI
@@ -29,6 +29,9 @@ pub enum Error {
 
     /// The EFI memory map had more entries than our fixed size array allows.
     MemoryMapOutOfEntries,
+
+    /// An error occured when trying to construct the memory map `RangeSet`.
+    MemoryRangeSet(rangeset::Error),
 }
 
 static EFI_SYSTEM_TABLE: AtomicPtr<EfiSystemTable> = AtomicPtr::new(core::ptr::null_mut());
@@ -215,7 +218,7 @@ pub fn get_memory_map(image_handle: EfiHandle) -> Result<RangeSet> {
                 usable_memory.insert(Range {
                     start: entry.physical_start,
                     end: end,
-                });
+                }).map_err(|e| Error::MemoryRangeSet(e))?;
             }
            
         }

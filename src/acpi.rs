@@ -4,7 +4,7 @@
 use core::intrinsics::size_of;
 
 use crate::efi;
-use crate::mm::{self, PhysAddr};
+use crate::mm::physmem::{PhysAddr, PhysSlice};
 
 /// A `Result` type that wraps and ACPI error
 type Result<T> = core::result::Result<T, Error>;
@@ -73,9 +73,11 @@ pub enum Error {
 unsafe fn checksum(addr: PhysAddr, size: usize, typ: TableType) -> Result<()> {
     // Compute and validate the checksum
     let chk = (0..size as u64).try_fold(0u8, |acc, offset| {
-        Ok(acc.wrapping_add(mm::read_phys::<u8>(PhysAddr(
-            addr.0.checked_add(offset).ok_or(Error::IntegerOverflow)?,
-        ))))
+        Ok(acc.wrapping_add(
+            PhysAddr(addr.0.checked_add(offset)
+                .ok_or(Error::IntegerOverflow)?)
+                .read::<u8>()
+        ))
     })?;
 
     if chk == 0 {
@@ -118,7 +120,7 @@ impl Rsdp {
         checksum(addr, size_of::<Self>(), TableType::Rsdp)?;
 
         // Get the RSDP table
-        let rsdp = mm::read_phys::<Self>(addr);
+        let rsdp = addr.read::<Self>();
 
         // Check the signature.
         if &rsdp.signature != b"RSD PTR " {
@@ -167,7 +169,7 @@ impl RsdpExtended {
         checksum(addr, size_of::<Self>(), TableType::RsdpExtended)?;
 
         // Get the extended RSDP table
-        let rsdp = mm::read_phys::<Self>(addr);
+        let rsdp = addr.read::<Self>();
 
         // Check the size
         if rsdp.length as usize != size_of::<Self>() {
@@ -226,7 +228,7 @@ impl Table {
     // From an Addr check the validity of the Table.
     unsafe fn from_addr(addr: PhysAddr) -> Result<(Self, TableType, PhysAddr, usize)> {
         // Read the table.
-        let table = mm::read_phys::<Self>(addr);
+        let table = addr.read::<Self>();
 
         // Get the type of this table.
         let typ = TableType::from(table.signature);
@@ -260,7 +262,7 @@ impl Madt {
         const E: Error = Error::LengthMismatch(TableType::Madt);
         
         // Create a slice to the physical memory
-        let mut slice = mm::PhysSlice::new(addr, size);
+        let mut slice = PhysSlice::new(addr, size);
 
         // Read the local APIC physical address
         let _local_apic_addr = slice.consume::<u32>().map_err(|_| E)?;
@@ -382,7 +384,7 @@ pub unsafe fn init() -> Result<()> {
 
         // Get the table address by reading the XSDT entry.
         // It has been observed in OVMF that these addresses indeed can be unaligned.
-        let table_addr = mm::read_phys_unaligned::<u64>(PhysAddr(entry_addr as u64));
+        let table_addr = PhysAddr(entry_addr as u64).read_unaligned::<u64>();
 
         // Parse and validate the table header
         let (_, typ, data, length) = Table::from_addr(PhysAddr(table_addr))?;
