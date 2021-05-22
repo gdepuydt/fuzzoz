@@ -15,17 +15,20 @@ pub enum TableType {
     /// The root system description pointer (ACPI 1.0).
     Rsdp,
 
-    /// The extended root systen description pointer (ACPI 2.0).
+    /// The extended root system description pointer (ACPI 2.0).
     RsdpExtended,
 
-    /// Extended Systen Description Table
+    /// Extended Systen Description Table.
     Xsdt,
 
-    /// Multiple APIC (Advanced Programmable Interrupt Controller) Description Table
+    /// Multiple APIC (Advanced Programmable Interrupt Controller) Description Table.
     Madt,
 
-    /// System Resource Affinity Table
+    /// System Resource Affinity Table.
     Srat,
+
+    /// Serial Port Console Redirection Table.
+    Spcr,
 
     /// Unknown table type
     Unknown([u8; 4]),
@@ -37,6 +40,7 @@ impl From<[u8; 4]> for TableType {
             b"XSDT" => Self::Xsdt,
             b"APIC" => Self::Madt,
             b"SRAT" => Self::Srat,
+            b"Spcr" => Self::Spcr,
             _ => Self::Unknown(val),
         }
     }
@@ -392,6 +396,10 @@ pub unsafe fn init() -> Result<()> {
         match typ {
             TableType::Madt => {
                 Madt::from_addr(data, length)?;
+            }
+
+            TableType::Spcr => {
+                print!("We have an SPCR!\n");
             }
 
             // Unknown

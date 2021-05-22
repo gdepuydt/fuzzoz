@@ -55,3 +55,6 @@ extern "C" fn efi_main(image_handle: EfiHandle, system_table: EfiSystemTablePtr)
 
     loop {}
 }
+
+#[no_mangle]
+fn __chkstk() {}
