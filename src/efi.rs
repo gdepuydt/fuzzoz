@@ -1,4 +1,5 @@
 use core::{
+    mem::size_of,
     sync::atomic::{AtomicPtr, Ordering},
     usize,
 };
@@ -26,6 +27,10 @@ pub enum Error {
 
     /// We failed to get the memory map from EFI.
     MemoryMap(EfiStatus),
+
+    /// The memory map returned from EFI was did not fit within the bounds
+    /// that it was reported.
+    MemoryMapOutOfBounds,
 
     /// We failed exiting EFI boot services.
     ExitBootServices(EfiStatus),
@@ -207,7 +212,11 @@ pub fn get_memory_map(image_handle: EfiHandle) -> Result<RangeSet> {
         // Go through each memory map entry.
         for offset in (0..size).step_by(mdesc_size) {
             let entry = core::ptr::read_unaligned(
-                memory_map[offset..].as_ptr() as *const EfiMemoryDescriptor
+                memory_map.get(offset..)
+                    .ok_or(Error::MemoryMapOutOfBounds)?
+                    .get(..offset + size_of::<EfiMemoryDescriptor>())
+                    .ok_or(Error::MemoryMapOutOfBounds)?
+                    .as_ptr() as *const EfiMemoryDescriptor
             );
 
             let typ: EfiMemoryType = entry.typ.into();

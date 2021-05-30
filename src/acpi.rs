@@ -36,6 +36,7 @@ pub enum TableType {
 }
 
 impl From<[u8; 4]> for TableType {
+    /// Convert from ACPI table string into an enum.
     fn from(val: [u8; 4]) -> Self {
         match &val {
             b"XSDT" => Self::Xsdt,
@@ -80,7 +81,7 @@ unsafe fn checksum(addr: PhysAddr, size: usize, typ: TableType) -> Result<()> {
         Ok(acc.wrapping_add(
             PhysAddr(addr.0.checked_add(offset)
                 .ok_or(Error::IntegerOverflow)?)
-                .read::<u8>()
+                .read_unaligned::<u8>()
         ))
     })?;
 
@@ -124,7 +125,7 @@ impl Rsdp {
         checksum(addr, size_of::<Self>(), TableType::Rsdp)?;
 
         // Get the RSDP table
-        let rsdp = addr.read::<Self>();
+        let rsdp = addr.read_unaligned::<Self>();
 
         // Check the signature.
         if &rsdp.signature != b"RSD PTR " {
@@ -173,7 +174,7 @@ impl RsdpExtended {
         checksum(addr, size_of::<Self>(), TableType::RsdpExtended)?;
 
         // Get the extended RSDP table
-        let rsdp = addr.read::<Self>();
+        let rsdp = addr.read_unaligned::<Self>();
 
         // Check the size
         if rsdp.length as usize != size_of::<Self>() {
@@ -232,7 +233,7 @@ impl Table {
     // From an Addr check the validity of the Table.
     unsafe fn from_addr(addr: PhysAddr) -> Result<(Self, TableType, PhysAddr, usize)> {
         // Read the table.
-        let table = addr.read::<Self>();
+        let table = addr.read_unaligned::<Self>();
 
         // Get the type of this table.
         let typ = TableType::from(table.signature);
