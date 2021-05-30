@@ -18,6 +18,12 @@ pub enum Error {
     /// The EFI System Table has not been registered.
     NotRegistered,
 
+    /// EFI did not reort a valid ACPI table.
+    AcpiTableNotFound,
+
+    /// EFI system table was not found.
+    EfiSystemTableNotFound,
+
     /// We failed to get the memory map from EFI.
     MemoryMap(EfiStatus),
 
@@ -57,11 +63,11 @@ impl EfiSystemTablePtr {
     }
 }
 
-pub fn output_string(string: &str) {
+pub fn output_string(string: &str) -> Result<()> {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
-        return;
+        return Err(Error::EfiSystemTableNotFound);
     }
 
     let console_out = unsafe { (*system_table).console_out };
@@ -103,11 +109,13 @@ pub fn output_string(string: &str) {
             ((*(console_out)).output_string)(console_out, tmp.as_ptr());
         }
     }
+
+    Ok(())
 }
 
 /// Get the base of the ACPI table RSD PTR (RSDP). If EFI did not report an ACPI
 /// table, then we return `None`.
-pub fn get_acpi_table() -> Option<usize> {
+pub fn get_acpi_table() -> Result<usize> {
 
     /// ACPI 2.0 or newer tables should use EFI_ACPI_TABLE_GUID
     const EFI_ACPI_TABLE_GUID: EfiGuid = EfiGuid(
@@ -128,7 +136,7 @@ pub fn get_acpi_table() -> Option<usize> {
     let system_table = EFI_SYSTEM_TABLE.load(Ordering::SeqCst);
 
     if system_table.is_null() {
-        return None;
+        return Err(Error::AcpiTableNotFound);
     }
 
     // Convert system table into Rust reference
@@ -149,7 +157,7 @@ pub fn get_acpi_table() -> Option<usize> {
                 .find_map(|EfiConfigurationTable { guid, table }| {
                     (guid == &ACPI_TABLE_GUID).then_some(*table)
                 })
-        })
+        }).ok_or(Error::AcpiTableNotFound)
 }
 
 /// Holds a region of usable physical memory

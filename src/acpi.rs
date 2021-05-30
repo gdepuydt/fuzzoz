@@ -12,7 +12,8 @@ type Result<T> = core::result::Result<T, Error>;
 /// Different types of ACPI tables, mainly used for error information.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableType {
-    /// The root system description pointer (ACPI 1.0).
+
+    /// Root System Description Pointer.
     Rsdp,
 
     /// The extended root system description pointer (ACPI 2.0).
@@ -49,9 +50,8 @@ impl From<[u8; 4]> for TableType {
 /// Errors from ACPI table parsing.
 #[derive(Debug)]
 pub enum Error {
-    /// The ACPI table address was not reported by UEFI and thus we were unable
-    /// tofind the RSDP.
-    RsdpNotFound,
+    /// An EFI API returned sn error.
+    EfiError(efi::Error),
 
     /// An ACPI table had an invalid checksum.
     ChecksumMismatch(TableType),
@@ -357,7 +357,8 @@ impl Madt {
 /// Initialize the ACPI subsystem.
 pub unsafe fn init() -> Result<()> {
     // Get the ACPI table base from EFI.
-    let rsdp_addr = efi::get_acpi_table().ok_or(Error::RsdpNotFound)?;
+    let rsdp_addr = efi::get_acpi_table().map_err(|e|
+        Error::EfiError(e))?;
 
     // Validate and get the RSDP.
     let rsdp = RsdpExtended::from_addr(PhysAddr(rsdp_addr as u64))?;

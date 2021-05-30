@@ -1,12 +1,11 @@
-use core::fmt::{Result, Write};
+use core::fmt::{Result, Error, Write};
 
 /// A dummy screen writing structure we can implement `Write` on
 pub struct ScreenWriter;
 
 impl Write for ScreenWriter {
     fn write_str(&mut self, s: &str) -> Result {
-        crate::efi::output_string(s);
-        Ok(())
+        crate::efi::output_string(s).map_err(|_| Error)
     }
 }
 
